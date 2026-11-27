@@ -5,6 +5,11 @@ import sys
 import webbrowser
 from pathlib import Path
 import json
+import threading
+import urllib.request
+import zipfile
+import shutil
+import tempfile
 
 try:
     import psutil
@@ -16,6 +21,7 @@ ctk.set_default_color_theme("dark-blue")
 
 APP_DIR = Path(__file__).parent
 CONFIG_FILE = APP_DIR / "config.json"
+OPTISCALER_DIR = APP_DIR / "OptiScaler"
 
 LEGION_RESOLUTIONS = [
     "1600x1000",   # Native
@@ -26,7 +32,6 @@ LEGION_RESOLUTIONS = [
     "640x400"
 ]
 
-# Common Legion Space related processes
 LEGION_SPACE_PROCESSES = [
     "LegionSpace.exe",
     "LSDaemon.exe",
@@ -36,6 +41,11 @@ LEGION_SPACE_PROCESSES = [
     "LegionSpaceComponent.exe",
     "LegionSpaceToast.exe",
 ]
+
+# Official Lenovo AMD driver for Legion Go (25.30.44)
+LENOVO_AMD_DRIVER_URL = "https://support.lenovo.com/us/en/products/laptops-and-netbooks/legion-series/legion-go-8apu1/downloads/ds565497-amd-graphics-driver-for-windows-11-64-bit-legion-go-8apu1"
+LENOVO_SUPPORT_URL = "https://pcsupport.lenovo.com/us/en/products/laptops-and-netbooks/legion-series/legion-go-8apu1"
+AMD_SUPPORT_URL = "https://www.amd.com/en/support"
 
 DEFAULT_CONFIG = {
     "tdp": 25,
@@ -65,6 +75,7 @@ class LegionCustomApp(ctk.CTk):
         self.config = self.load_config()
         self.right_panel_visible = False
         self.games = []
+        self.download_in_progress = False
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -84,7 +95,6 @@ class LegionCustomApp(ctk.CTk):
             font=ctk.CTkFont(size=20, weight="bold")
         ).pack(side="left", padx=22, pady=16)
 
-        # Right-top button opens the Quick Menu
         self.open_menu_btn = ctk.CTkButton(
             self.top_bar, text="Quick Menu  ▶",
             width=150, height=38,
@@ -252,7 +262,7 @@ class LegionCustomApp(ctk.CTk):
         self.brightness_slider.set(self.config.get("brightness", 70))
         self.brightness_slider.pack(fill="x", padx=14, pady=(0, 14))
 
-        # ========== SCALERS & FRAME GEN ==========
+        # ========== SCALERS & FRAME GEN (BUILT-IN) ==========
         self._section("SCALERS & FRAME GEN")
 
         scale_frame = self._card()
@@ -275,45 +285,54 @@ class LegionCustomApp(ctk.CTk):
             command=lambda v: self.update_config("frame_gen", v)
         ).pack(fill="x", padx=14, pady=(0, 12))
 
+        # Built-in OptiScaler download / update
+        ctk.CTkLabel(
+            scale_frame,
+            text="OptiScaler is downloaded and managed by this app.\nNo need to source it yourself.",
+            justify="left", text_color="#9aa3b2"
+        ).pack(anchor="w", padx=14, pady=(0, 6))
+
+        self.opti_status = ctk.CTkLabel(
+            scale_frame, text=self.get_optiscaler_status(),
+            text_color="#7a8494"
+        )
+        self.opti_status.pack(anchor="w", padx=14, pady=(0, 6))
+
         btn_row1 = ctk.CTkFrame(scale_frame, fg_color="transparent")
         btn_row1.pack(fill="x", padx=14, pady=(0, 6))
 
-        ctk.CTkButton(
-            btn_row1, text="Launch Lossless Scaling",
-            command=self.launch_lossless,
+        self.download_opti_btn = ctk.CTkButton(
+            btn_row1, text="Download / Update OptiScaler",
+            command=self.download_optiscaler,
             fg_color="#1a8f5c", hover_color="#147a4d", height=36
-        ).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        )
+        self.download_opti_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
         ctk.CTkButton(
-            btn_row1, text="OptiScaler Folder",
+            btn_row1, text="Open Folder",
             command=self.open_optiscaler_folder, height=36
         ).pack(side="left", expand=True, fill="x", padx=(6, 0))
-
-        ctk.CTkLabel(
-            scale_frame, text="Official Repositories",
-            font=ctk.CTkFont(size=12, weight="bold"), text_color="#7a8494"
-        ).pack(anchor="w", padx=14, pady=(8, 4))
 
         btn_row2 = ctk.CTkFrame(scale_frame, fg_color="transparent")
         btn_row2.pack(fill="x", padx=14, pady=(0, 6))
 
         ctk.CTkButton(
-            btn_row2, text="OptiScaler GitHub",
-            command=lambda: webbrowser.open("https://github.com/optiscaler/OptiScaler"),
-            height=34, fg_color="#2a3140"
+            btn_row2, text="Launch Lossless Scaling",
+            command=self.launch_lossless,
+            fg_color="#2a6df4", height=34
         ).pack(side="left", expand=True, fill="x", padx=(0, 6))
 
         ctk.CTkButton(
-            btn_row2, text="OptiScaler Releases",
-            command=lambda: webbrowser.open("https://github.com/optiscaler/OptiScaler/releases"),
+            btn_row2, text="OptiScaler Wiki",
+            command=lambda: webbrowser.open("https://github.com/optiscaler/OptiScaler/wiki"),
             height=34, fg_color="#2a3140"
         ).pack(side="left", expand=True, fill="x", padx=(6, 0))
 
-        ctk.CTkButton(
-            scale_frame, text="OptiScaler Wiki (Install Guide)",
-            command=lambda: webbrowser.open("https://github.com/optiscaler/OptiScaler/wiki"),
-            height=34, fg_color="#2a3140"
-        ).pack(fill="x", padx=14, pady=(0, 14))
+        ctk.CTkLabel(
+            scale_frame,
+            text="After download: copy the files from the OptiScaler folder\ninto your game directory (usually rename to dxgi.dll).",
+            justify="left", text_color="#7a8494", font=ctk.CTkFont(size=12)
+        ).pack(anchor="w", padx=14, pady=(4, 14))
 
         # ========== LEGION GO MAPPER + BUTTON DUTIES ==========
         self._section("LEGION GO MAPPER & BUTTONS")
@@ -322,7 +341,7 @@ class LegionCustomApp(ctk.CTk):
 
         ctk.CTkLabel(
             mapper_frame,
-            text="Recommended button duties (so they don't conflict):",
+            text="Recommended button duties:",
             justify="left", font=ctk.CTkFont(weight="bold")
         ).pack(anchor="w", padx=14, pady=(12, 4))
 
@@ -330,13 +349,13 @@ class LegionCustomApp(ctk.CTk):
             mapper_frame,
             text="• Left Legion button  → Launch this app\n"
                  "• Right / Top button   → Open Quick Menu\n"
-                 "• Y1 / Y2 / Y3 + Rear → Your custom actions",
+                 "• Y1 / Y2 / Y3 + Rear → Custom actions",
             justify="left", text_color="#c5cdd8"
         ).pack(anchor="w", padx=14, pady=(0, 8))
 
         ctk.CTkLabel(
             mapper_frame,
-            text="Map the physical Legion buttons with PowerToys\nor AutoHotkey so they open this app / menu\ninstead of Legion Space.",
+            text="Map physical Legion buttons with PowerToys\nor AutoHotkey so they open this app instead of Legion Space.",
             justify="left", text_color="#9aa3b2"
         ).pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -377,22 +396,41 @@ class LegionCustomApp(ctk.CTk):
 
         drivers_frame = self._card()
 
-        ctk.CTkButton(
-            drivers_frame, text="Lenovo Legion Drivers / Support",
-            command=lambda: webbrowser.open("https://pcsupport.lenovo.com/us/en/products/laptops-and-netbooks/legion-series/legion-go-8apu1"),
-            height=36, fg_color="#2a3140"
-        ).pack(fill="x", padx=14, pady=(12, 6))
+        ctk.CTkLabel(
+            drivers_frame,
+            text="Official AMD Adrenalin for Legion Go\nVersion 25.30.44 (Lenovo packaged)",
+            justify="left", font=ctk.CTkFont(weight="bold")
+        ).pack(anchor="w", padx=14, pady=(12, 6))
 
         ctk.CTkButton(
-            drivers_frame, text="AMD Adrenalin / Chipset",
-            command=lambda: webbrowser.open("https://www.amd.com/en/support"),
-            height=36, fg_color="#2a3140"
+            drivers_frame, text="Download AMD 25.30.44 (Legion Go)",
+            command=lambda: webbrowser.open(LENOVO_AMD_DRIVER_URL),
+            height=40, fg_color="#e67e22", hover_color="#d35400",
+            font=ctk.CTkFont(weight="bold")
+        ).pack(fill="x", padx=14, pady=(0, 8))
+
+        ctk.CTkLabel(
+            drivers_frame,
+            text="This is the official Lenovo package made for\nthe first-gen Legion Go (Z1 Extreme).\nDownload the .exe and run it as Administrator.",
+            justify="left", text_color="#9aa3b2", font=ctk.CTkFont(size=12)
+        ).pack(anchor="w", padx=14, pady=(0, 10))
+
+        ctk.CTkButton(
+            drivers_frame, text="Lenovo Legion Go Support Page",
+            command=lambda: webbrowser.open(LENOVO_SUPPORT_URL),
+            height=34, fg_color="#2a3140"
+        ).pack(fill="x", padx=14, pady=(0, 6))
+
+        ctk.CTkButton(
+            drivers_frame, text="AMD Adrenalin / Chipset Drivers",
+            command=lambda: webbrowser.open(AMD_SUPPORT_URL),
+            height=34, fg_color="#2a3140"
         ).pack(fill="x", padx=14, pady=(0, 6))
 
         ctk.CTkButton(
             drivers_frame, text="Check for App Updates (GitHub)",
             command=lambda: webbrowser.open("https://github.com/devin12310-prog/Legion-Custom-App"),
-            height=36, fg_color="#2a6df4"
+            height=34, fg_color="#2a6df4"
         ).pack(fill="x", padx=14, pady=(0, 14))
 
         # ========== SYSTEM ==========
@@ -426,10 +464,101 @@ class LegionCustomApp(ctk.CTk):
         frame.pack(fill="x", pady=(0, 6))
         return frame
 
+    def get_optiscaler_status(self):
+        if OPTISCALER_DIR.exists() and any(OPTISCALER_DIR.iterdir()):
+            return "OptiScaler: Installed locally"
+        return "OptiScaler: Not downloaded yet"
+
+    def download_optiscaler(self):
+        if self.download_in_progress:
+            return
+
+        self.download_in_progress = True
+        self.download_opti_btn.configure(text="Downloading...", state="disabled")
+        self.opti_status.configure(text="Fetching latest OptiScaler release...", text_color="#f1c40f")
+
+        def worker():
+            try:
+                # Get latest release info from official repo
+                api_url = "https://api.github.com/repos/optiscaler/OptiScaler/releases/latest"
+                req = urllib.request.Request(api_url, headers={"User-Agent": "Legion-Custom-App"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode())
+
+                # Prefer a zip asset
+                assets = data.get("assets", [])
+                zip_url = None
+                tag = data.get("tag_name", "unknown")
+
+                for asset in assets:
+                    name = asset.get("name", "").lower()
+                    if name.endswith(".zip"):
+                        zip_url = asset.get("browser_download_url")
+                        break
+
+                if not zip_url:
+                    # Fallback to source zipball
+                    zip_url = data.get("zipball_url")
+
+                if not zip_url:
+                    raise Exception("No downloadable asset found")
+
+                self.after(0, lambda: self.opti_status.configure(
+                    text=f"Downloading {tag}...", text_color="#f1c40f"
+                ))
+
+                # Download to temp
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    zip_path = Path(tmpdir) / "optiscaler.zip"
+                    urllib.request.urlretrieve(zip_url, zip_path)
+
+                    # Extract
+                    extract_dir = Path(tmpdir) / "extracted"
+                    extract_dir.mkdir()
+                    with zipfile.ZipFile(zip_path, "r") as zf:
+                        zf.extractall(extract_dir)
+
+                    # Clear old folder and copy new files
+                    if OPTISCALER_DIR.exists():
+                        shutil.rmtree(OPTISCALER_DIR)
+                    OPTISCALER_DIR.mkdir(parents=True)
+
+                    # Move contents (handle nested folder from zipball)
+                    items = list(extract_dir.iterdir())
+                    if len(items) == 1 and items[0].is_dir():
+                        src = items[0]
+                    else:
+                        src = extract_dir
+
+                    for item in src.iterdir():
+                        dest = OPTISCALER_DIR / item.name
+                        if item.is_dir():
+                            shutil.copytree(item, dest)
+                        else:
+                            shutil.copy2(item, dest)
+
+                self.after(0, lambda: self.opti_status.configure(
+                    text=f"OptiScaler {tag} installed successfully",
+                    text_color="#2ecc71"
+                ))
+
+            except Exception as e:
+                self.after(0, lambda: self.opti_status.configure(
+                    text=f"Download failed: {str(e)[:60]}",
+                    text_color="#e74c3c"
+                ))
+                print("OptiScaler download error:", e)
+
+            finally:
+                self.download_in_progress = False
+                self.after(0, lambda: self.download_opti_btn.configure(
+                    text="Download / Update OptiScaler", state="normal"
+                ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def force_close_legion_space(self):
-        """Kill common Legion Space processes so buttons don't conflict."""
         killed = []
-        errors = []
 
         if psutil:
             for proc in psutil.process_iter(["pid", "name"]):
@@ -440,10 +569,7 @@ class LegionCustomApp(ctk.CTk):
                         killed.append(name)
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     pass
-                except Exception as e:
-                    errors.append(str(e))
         else:
-            # Fallback using taskkill
             for name in LEGION_SPACE_PROCESSES:
                 try:
                     result = subprocess.run(
@@ -467,9 +593,6 @@ class LegionCustomApp(ctk.CTk):
                 text="No Legion Space processes found running",
                 text_color="#9aa3b2"
             )
-
-        if errors:
-            print("Errors while closing:", errors)
 
     def on_preset_change(self):
         preset = self.preset_var.get()
@@ -528,12 +651,11 @@ class LegionCustomApp(ctk.CTk):
             print("Could not find Lossless Scaling.")
 
     def open_optiscaler_folder(self):
-        folder = APP_DIR / "OptiScaler"
-        folder.mkdir(exist_ok=True)
+        OPTISCALER_DIR.mkdir(exist_ok=True)
         if sys.platform == "win32":
-            os.startfile(folder)
+            os.startfile(OPTISCALER_DIR)
         else:
-            subprocess.Popen(["xdg-open", str(folder)])
+            subprocess.Popen(["xdg-open", str(OPTISCALER_DIR)])
 
     def update_sys_info(self):
         lines = []
@@ -552,6 +674,7 @@ class LegionCustomApp(ctk.CTk):
         lines.append(f"Scaler: {self.config.get('scaler')}")
         lines.append(f"Frame Gen: {self.config.get('frame_gen')}")
         lines.append(f"Resolution: {self.config.get('resolution')}")
+        lines.append(self.get_optiscaler_status())
 
         self.sys_info_label.configure(text="\n".join(lines))
 

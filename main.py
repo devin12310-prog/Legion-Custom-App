@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Legion Custom App v1.4.0"""
+"""Legion Custom App v1.5.0 - Apply scalers & frame gen from the app"""
 
 import customtkinter as ctk
 import subprocess, os, sys, webbrowser, json, threading, time, shutil, tempfile, zipfile
 from pathlib import Path
 import urllib.request
+from tkinter import filedialog, messagebox
 
 try:
     import psutil
@@ -12,7 +13,7 @@ except ImportError:
     psutil = None
 
 APP_NAME = "Legion Custom"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 GITHUB_REPO = "devin12310-prog/Legion-Custom-App"
 GITHUB_PAGE = f"https://github.com/{GITHUB_REPO}"
 GITHUB_ZIP = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
@@ -20,6 +21,7 @@ GITHUB_ZIP = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
 APP_DIR = Path(__file__).parent.resolve()
 CONFIG_FILE = APP_DIR / "config.json"
 OPTISCALER_DIR = APP_DIR / "OptiScaler"
+APPLIED_LOG = APP_DIR / "applied_games.json"  # track where we installed OptiScaler
 
 LENOVO_AMD_DRIVER_URL = "https://support.lenovo.com/us/en/products/laptops-and-netbooks/legion-series/legion-go-8apu1/downloads/ds565497-amd-graphics-driver-for-windows-11-64-bit-legion-go-8apu1"
 
@@ -29,10 +31,14 @@ LEGION_SPACE_PROCESSES = [
     "LegionSpaceComponent.exe", "LegionSpaceToast.exe",
 ]
 
+# Common DLL names OptiScaler can replace
+OPTI_DLL_CANDIDATES = ["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll"]
+
 DEFAULT_CONFIG = {
     "tdp": 25, "preset": "Balanced", "fan_mode": "Smart",
     "scaler": "None", "frame_gen": "Off",
     "resolution": "1600x1000", "refresh": 144,
+    "opti_dll_name": "dxgi.dll",
 }
 
 BG, PANEL, CARD = "#0d1117", "#161b22", "#1c2333"
@@ -48,7 +54,6 @@ class LegionCustomApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME}  v{APP_VERSION}")
-        # Larger default for Legion Go screen
         self.geometry("1600x1000")
         self.minsize(1200, 800)
         self.configure(fg_color=BG)
@@ -56,11 +61,13 @@ class LegionCustomApp(ctk.CTk):
         self.after(400, lambda: self.attributes("-topmost", False))
 
         self.config = self._load()
+        self.applied = self._load_applied()
         self.menu_open = False
         self.busy = False
+        self.games = []
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=0)  # right panel fixed
+        self.grid_columnconfigure(1, weight=0)
         self.grid_rowconfigure(0, weight=1)
 
         self._build_main()
@@ -88,6 +95,20 @@ class LegionCustomApp(ctk.CTk):
     def _save(self):
         try:
             CONFIG_FILE.write_text(json.dumps(self.config, indent=2))
+        except Exception:
+            pass
+
+    def _load_applied(self):
+        if APPLIED_LOG.exists():
+            try:
+                return json.loads(APPLIED_LOG.read_text())
+            except Exception:
+                pass
+        return {}
+
+    def _save_applied(self):
+        try:
+            APPLIED_LOG.write_text(json.dumps(self.applied, indent=2))
         except Exception:
             pass
 
@@ -137,11 +158,9 @@ class LegionCustomApp(ctk.CTk):
 
     # ================= QUICK MENU =================
     def _build_menu(self):
-        # Wider panel for Legion Go
-        self.menu = ctk.CTkFrame(self, width=460, fg_color=PANEL, corner_radius=0)
+        self.menu = ctk.CTkFrame(self, width=480, fg_color=PANEL, corner_radius=0)
         self.menu.grid(row=0, column=1, sticky="nsew")
         self.menu.grid_propagate(False)
-        # Start hidden
         self.menu.grid_remove()
 
         hdr = ctk.CTkFrame(self.menu, fg_color="transparent")
@@ -253,10 +272,10 @@ class LegionCustomApp(ctk.CTk):
             self.ref_btns[hz] = b
         self._hl_ref()
 
-        # ===== UPSCALER (restored) =====
+        # ===== UPSCALER + APPLY =====
         self._sec("UPSCALER")
         upsf = self._card()
-        ctk.CTkLabel(upsf, text="Select upscaler for games", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(14, 6))
+        ctk.CTkLabel(upsf, text="Preferred upscaler", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(14, 6))
         self.scaler_var = ctk.StringVar(value=self.config.get("scaler", "None"))
         ctk.CTkOptionMenu(
             upsf,
@@ -265,51 +284,75 @@ class LegionCustomApp(ctk.CTk):
             command=lambda v: self.setc("scaler", v),
             height=40, font=ctk.CTkFont(size=14),
             fg_color=PILL, button_color=ACCENT
-        ).pack(fill="x", padx=14, pady=(0, 14))
+        ).pack(fill="x", padx=14, pady=(0, 8))
 
-        # ===== FRAME GEN (restored) =====
+        ctk.CTkLabel(upsf, text="DLL name to use", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(4, 4))
+        self.dll_var = ctk.StringVar(value=self.config.get("opti_dll_name", "dxgi.dll"))
+        ctk.CTkOptionMenu(
+            upsf, values=OPTI_DLL_CANDIDATES, variable=self.dll_var,
+            command=lambda v: self.setc("opti_dll_name", v),
+            height=36, fg_color=PILL, button_color=ACCENT
+        ).pack(fill="x", padx=14, pady=(0, 10))
+
+        self.opti_status = ctk.CTkLabel(upsf, text="Checking OptiScaler...", text_color=TEXT_DIM,
+                                        font=ctk.CTkFont(size=12))
+        self.opti_status.pack(anchor="w", padx=14, pady=(0, 6))
+
+        brow = ctk.CTkFrame(upsf, fg_color="transparent")
+        brow.pack(fill="x", padx=12, pady=(0, 6))
+        self.opti_dl_btn = ctk.CTkButton(brow, text="Download OptiScaler", height=40,
+                                         fg_color=ACCENT, hover_color=ACCENT_DIM, text_color="#000",
+                                         command=self.download_optiscaler)
+        self.opti_dl_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
+        ctk.CTkButton(brow, text="Folder", width=70, height=40, fg_color=PILL,
+                      command=self.open_opti_folder).pack(side="left")
+
+        # Apply / Remove to game
+        arow = ctk.CTkFrame(upsf, fg_color="transparent")
+        arow.pack(fill="x", padx=12, pady=(4, 6))
+        ctk.CTkButton(arow, text="Apply to Game Folder...", height=42,
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      fg_color=BLUE, hover_color="#2a5fd4",
+                      command=self.apply_opti_to_folder).pack(side="left", expand=True, fill="x", padx=(0, 4))
+        ctk.CTkButton(arow, text="Remove from Folder...", height=42,
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      fg_color=RED, hover_color="#e03e4e",
+                      command=self.remove_opti_from_folder).pack(side="left", expand=True, fill="x", padx=(4, 0))
+
+        self.apply_status = ctk.CTkLabel(upsf, text="Pick a game folder to install/remove OptiScaler",
+                                         text_color=TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left")
+        self.apply_status.pack(anchor="w", padx=14, pady=(0, 14))
+
+        # ===== FRAME GEN =====
         self._sec("FRAME GENERATION")
         fgf = self._card()
-        ctk.CTkLabel(fgf, text="Select frame generation method", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(14, 6))
+        ctk.CTkLabel(fgf, text="Preferred frame gen", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(14, 6))
         self.fg_var = ctk.StringVar(value=self.config.get("frame_gen", "Off"))
         ctk.CTkOptionMenu(
             fgf,
             values=["Off", "Lossless Scaling (LSFG)", "AMD AFMF", "OptiFG", "XeFG"],
             variable=self.fg_var,
-            command=lambda v: self.setc("frame_gen", v),
+            command=self.on_fg_change,
             height=40, font=ctk.CTkFont(size=14),
             fg_color=PILL, button_color=ACCENT
-        ).pack(fill="x", padx=14, pady=(0, 10))
+        ).pack(fill="x", padx=14, pady=(0, 8))
 
-        self.fg_status = ctk.CTkLabel(fgf, text="Checking Lossless Scaling...", text_color=TEXT_DIM,
+        self.fg_status = ctk.CTkLabel(fgf, text="Checking...", text_color=TEXT_DIM,
                                       font=ctk.CTkFont(size=12))
         self.fg_status.pack(anchor="w", padx=14, pady=(0, 6))
 
-        self.lossless_btn = ctk.CTkButton(fgf, text="Launch Lossless Scaling", height=42,
+        self.lossless_btn = ctk.CTkButton(fgf, text="Launch Lossless Scaling", height=44,
                                           font=ctk.CTkFont(size=14, weight="bold"),
                                           fg_color=BLUE, hover_color="#2a5fd4",
                                           command=self.launch_lossless)
-        self.lossless_btn.pack(fill="x", padx=14, pady=(0, 14))
+        self.lossless_btn.pack(fill="x", padx=14, pady=(0, 6))
 
-        # ===== OPTISCALER TOOL =====
-        self._sec("OPTISCALER TOOL")
-        opt = self._card()
-        self.opti_status = ctk.CTkLabel(opt, text="Checking...", text_color=TEXT_DIM,
-                                        font=ctk.CTkFont(size=12))
-        self.opti_status.pack(anchor="w", padx=14, pady=(14, 8))
-
-        orow = ctk.CTkFrame(opt, fg_color="transparent")
-        orow.pack(fill="x", padx=12, pady=(0, 6))
-        self.opti_dl_btn = ctk.CTkButton(orow, text="Download / Update", height=40,
-                                         fg_color=ACCENT, hover_color=ACCENT_DIM, text_color="#000",
-                                         command=self.download_optiscaler)
-        self.opti_dl_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        ctk.CTkButton(orow, text="Folder", width=80, height=40, fg_color=PILL,
-                      command=self.open_opti_folder).pack(side="left", padx=(0, 4))
-        ctk.CTkButton(orow, text="Remove", width=80, height=40, fg_color=RED,
-                      command=self.remove_optiscaler).pack(side="left")
-        ctk.CTkLabel(opt, text="Copy files into game folder (rename to dxgi.dll)",
-                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w", padx=14, pady=(4, 14))
+        ctk.CTkLabel(fgf,
+                     text="LSFG: launch Lossless Scaling then enable in its overlay\n"
+                          "AFMF: enable in AMD Adrenalin \u2192 Graphics\n"
+                          "OptiFG / XeFG: use after applying OptiScaler to the game",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left").pack(
+            anchor="w", padx=14, pady=(0, 14))
 
         # DRIVERS
         self._sec("DRIVERS")
@@ -342,7 +385,7 @@ class LegionCustomApp(ctk.CTk):
         f.pack(fill="x", pady=(0, 6))
         return f
 
-    # ---------- menu open/close (fixed) ----------
+    # ---------- menu ----------
     def toggle_menu(self):
         if self.menu_open:
             self.close_menu()
@@ -421,6 +464,17 @@ class LegionCustomApp(ctk.CTk):
         self.setc("refresh", h)
         self._hl_ref()
 
+    def on_fg_change(self, v):
+        self.setc("frame_gen", v)
+        if v == "Lossless Scaling (LSFG)":
+            self.fg_status.configure(text="Will use Lossless Scaling — launch it below", text_color=ACCENT)
+        elif v == "AMD AFMF":
+            self.fg_status.configure(text="Enable AFMF inside AMD Adrenalin", text_color=ORANGE)
+        elif v in ("OptiFG", "XeFG"):
+            self.fg_status.configure(text="Apply OptiScaler to the game first", text_color=ORANGE)
+        else:
+            self.fg_status.configure(text="Frame gen off", text_color=TEXT_DIM)
+
     def draw_fan(self):
         c = self.fan_canvas
         c.delete("all")
@@ -470,6 +524,122 @@ class LegionCustomApp(ctk.CTk):
                 pass
         self.after(2000, self._stats_loop)
 
+    # ---------- OptiScaler apply/remove ----------
+    def _opti_source_files(self):
+        """Return list of files to copy from OptiScaler folder."""
+        if not OPTISCALER_DIR.exists():
+            return []
+        return [p for p in OPTISCALER_DIR.rglob("*") if p.is_file()]
+
+    def apply_opti_to_folder(self):
+        if not OPTISCALER_DIR.exists() or not any(OPTISCALER_DIR.iterdir()):
+            self.apply_status.configure(text="Download OptiScaler first", text_color=RED)
+            return
+
+        folder = filedialog.askdirectory(title="Select game folder (where the .exe is)")
+        if not folder:
+            return
+        folder = Path(folder)
+
+        dll_name = self.dll_var.get() or "dxgi.dll"
+        # Find a main DLL in OptiScaler package to rename
+        src_files = list(OPTISCALER_DIR.iterdir())
+        # Prefer known entry DLLs
+        main_src = None
+        for candidate in ["OptiScaler.dll", "dxgi.dll", "winmm.dll", "version.dll"]:
+            p = OPTISCALER_DIR / candidate
+            if p.exists():
+                main_src = p
+                break
+        if main_src is None:
+            # take first dll
+            dlls = list(OPTISCALER_DIR.glob("*.dll"))
+            if dlls:
+                main_src = dlls[0]
+
+        try:
+            # Backup existing target dll if present
+            target = folder / dll_name
+            backup = folder / (dll_name + ".legionbak")
+            if target.exists() and not backup.exists():
+                shutil.copy2(target, backup)
+
+            # Copy all OptiScaler files
+            for item in OPTISCALER_DIR.iterdir():
+                dest = folder / item.name
+                if item.is_file():
+                    shutil.copy2(item, dest)
+                elif item.is_dir():
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(item, dest)
+
+            # Ensure the chosen DLL name exists (rename main if needed)
+            if main_src and main_src.name.lower() != dll_name.lower():
+                renamed = folder / dll_name
+                src_in_game = folder / main_src.name
+                if src_in_game.exists() and not renamed.exists():
+                    shutil.copy2(src_in_game, renamed)
+
+            key = str(folder.resolve())
+            self.applied[key] = {
+                "dll": dll_name,
+                "scaler": self.scaler_var.get(),
+                "time": time.strftime("%Y-%m-%d %H:%M"),
+            }
+            self._save_applied()
+
+            self.apply_status.configure(
+                text=f"Applied to:\n{folder.name}\nDLL: {dll_name}",
+                text_color=ACCENT
+            )
+        except Exception as e:
+            self.apply_status.configure(text=f"Apply failed: {e}", text_color=RED)
+
+    def remove_opti_from_folder(self):
+        folder = filedialog.askdirectory(title="Select game folder to remove OptiScaler from")
+        if not folder:
+            return
+        folder = Path(folder)
+
+        try:
+            removed = []
+            # Restore backup if we made one
+            for dll in OPTI_DLL_CANDIDATES:
+                bak = folder / (dll + ".legionbak")
+                target = folder / dll
+                if bak.exists():
+                    shutil.copy2(bak, target)
+                    bak.unlink()
+                    removed.append(f"restored {dll}")
+                elif target.exists() and (folder / "OptiScaler.dll").exists():
+                    # likely our install
+                    target.unlink()
+                    removed.append(f"removed {dll}")
+
+            # Remove other OptiScaler files we may have copied
+            for name in ["OptiScaler.dll", "OptiScaler.ini", "nvngx.dll", "libxess.dll",
+                         "amd_fidelityfx_dx12.dll", "amd_fidelityfx_vk.dll"]:
+                p = folder / name
+                if p.exists():
+                    p.unlink()
+                    removed.append(name)
+
+            key = str(folder.resolve())
+            if key in self.applied:
+                del self.applied[key]
+                self._save_applied()
+
+            if removed:
+                self.apply_status.configure(
+                    text=f"Removed from {folder.name}\n{', '.join(removed[:5])}",
+                    text_color=ACCENT
+                )
+            else:
+                self.apply_status.configure(text="Nothing OptiScaler-related found", text_color=TEXT_DIM)
+        except Exception as e:
+            self.apply_status.configure(text=f"Remove failed: {e}", text_color=RED)
+
     def find_lossless(self):
         cands = [
             Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Steam/steamapps/common/Lossless Scaling/LosslessScaling.exe",
@@ -483,10 +653,10 @@ class LegionCustomApp(ctk.CTk):
 
     def refresh_tools(self):
         if OPTISCALER_DIR.exists() and any(OPTISCALER_DIR.iterdir()):
-            self.opti_status.configure(text="Status: Installed", text_color=ACCENT)
+            self.opti_status.configure(text="OptiScaler: Installed — ready to apply", text_color=ACCENT)
             self.opti_dl_btn.configure(text="Update OptiScaler")
         else:
-            self.opti_status.configure(text="Status: Not installed", text_color=TEXT_DIM)
+            self.opti_status.configure(text="OptiScaler: Not installed", text_color=TEXT_DIM)
             self.opti_dl_btn.configure(text="Download OptiScaler")
 
         ls = self.find_lossless()
@@ -494,7 +664,7 @@ class LegionCustomApp(ctk.CTk):
             self.fg_status.configure(text="Lossless Scaling: Found", text_color=ACCENT)
             self.lossless_btn.configure(text="Launch Lossless Scaling", state="normal")
         else:
-            self.fg_status.configure(text="Lossless Scaling: Not found (Steam)", text_color=TEXT_DIM)
+            self.fg_status.configure(text="Lossless Scaling: Not found (install on Steam)", text_color=TEXT_DIM)
 
     def download_optiscaler(self):
         if self.busy: return
@@ -525,7 +695,7 @@ class LegionCustomApp(ctk.CTk):
                         d = OPTISCALER_DIR / it.name
                         if it.is_dir(): shutil.copytree(it, d)
                         else: shutil.copy2(it, d)
-                self.after(0, lambda: self.opti_status.configure(text=f"Installed {tag}", text_color=ACCENT))
+                self.after(0, lambda: self.opti_status.configure(text=f"Installed {tag} — ready to apply", text_color=ACCENT))
             except Exception as e:
                 self.after(0, lambda: self.opti_status.configure(text=f"Failed: {e}", text_color=RED))
             finally:
@@ -540,22 +710,15 @@ class LegionCustomApp(ctk.CTk):
         if sys.platform == "win32":
             os.startfile(OPTISCALER_DIR)
 
-    def remove_optiscaler(self):
-        if OPTISCALER_DIR.exists():
-            try:
-                shutil.rmtree(OPTISCALER_DIR)
-                self.opti_status.configure(text="Removed", text_color=TEXT_DIM)
-            except Exception as e:
-                self.opti_status.configure(text=f"Remove failed: {e}", text_color=RED)
-        self.refresh_tools()
-
     def launch_lossless(self):
         p = self.find_lossless()
         if p:
             subprocess.Popen([str(p)])
+            self.fg_status.configure(text="Lossless Scaling launched", text_color=ACCENT)
         else:
             try:
                 subprocess.Popen(["cmd", "/c", "start", "steam://rungameid/993090"], shell=True)
+                self.fg_status.configure(text="Opening via Steam...", text_color=ORANGE)
             except Exception:
                 self.fg_status.configure(text="Install Lossless Scaling from Steam", text_color=RED)
 
@@ -605,7 +768,7 @@ class LegionCustomApp(ctk.CTk):
                         self.after(0, lambda: self.upd_status.configure(text="Already up to date", text_color=ACCENT))
             except Exception as e:
                 self.after(0, lambda: self.upd_status.configure(
-                    text=f"Failed: {e}\nDownload ZIP manually from GitHub", text_color=RED))
+                    text=f"Failed: {e}\nDownload ZIP manually", text_color=RED))
             finally:
                 self.busy = False
                 self.after(0, lambda: self.upd_btn.configure(state="normal", text="Check & Update from GitHub"))
@@ -615,22 +778,69 @@ class LegionCustomApp(ctk.CTk):
     def refresh_games(self):
         for w in self.games_scroll.winfo_children():
             w.destroy()
-        games = self.scan_games()
-        if not games:
+        self.games = self.scan_games()
+        if not self.games:
             ctk.CTkLabel(self.games_scroll, text="No games found", text_color=TEXT_MUTED).grid(
                 row=0, column=0, columnspan=4, pady=60)
             return
-        for i, g in enumerate(games):
+        for i, g in enumerate(self.games):
             r, c = divmod(i, 4)
-            card = ctk.CTkFrame(self.games_scroll, width=220, height=130, corner_radius=14, fg_color=CARD)
+            card = ctk.CTkFrame(self.games_scroll, width=220, height=140, corner_radius=14, fg_color=CARD)
             card.grid(row=r, column=c, padx=8, pady=8, sticky="nsew")
             card.grid_propagate(False)
-            ctk.CTkLabel(card, text=g["name"][:26], font=ctk.CTkFont(size=13, weight="bold"),
-                         text_color=TEXT, wraplength=200).pack(pady=(20, 10), padx=8)
+            name = g["name"][:24]
+            applied = str(Path(g["path"]).parent.resolve()) in self.applied
+            label = name + ("  ✓" if applied else "")
+            ctk.CTkLabel(card, text=label, font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=ACCENT if applied else TEXT, wraplength=200).pack(pady=(16, 6), padx=8)
+            btnrow = ctk.CTkFrame(card, fg_color="transparent")
+            btnrow.pack()
             if Path(g["path"]).exists():
-                ctk.CTkButton(card, text="Play", width=100, height=32,
+                ctk.CTkButton(btnrow, text="Play", width=70, height=30,
                               fg_color=ACCENT, hover_color=ACCENT_DIM, text_color="#000",
-                              command=lambda p=g["path"]: subprocess.Popen([p], cwd=str(Path(p).parent))).pack()
+                              command=lambda p=g["path"]: subprocess.Popen([p], cwd=str(Path(p).parent))).pack(side="left", padx=2)
+                ctk.CTkButton(btnrow, text="Opti", width=55, height=30,
+                              fg_color=BLUE, hover_color="#2a5fd4",
+                              command=lambda p=g["path"]: self.quick_apply_opti(Path(p).parent)).pack(side="left", padx=2)
+
+    def quick_apply_opti(self, folder: Path):
+        """Apply OptiScaler to this game folder without file dialog."""
+        if not OPTISCALER_DIR.exists() or not any(OPTISCALER_DIR.iterdir()):
+            self.open_menu()
+            self.apply_status.configure(text="Download OptiScaler first (Quick Menu)", text_color=RED)
+            return
+        dll_name = self.config.get("opti_dll_name", "dxgi.dll")
+        try:
+            target = folder / dll_name
+            backup = folder / (dll_name + ".legionbak")
+            if target.exists() and not backup.exists():
+                shutil.copy2(target, backup)
+            for item in OPTISCALER_DIR.iterdir():
+                dest = folder / item.name
+                if item.is_file():
+                    shutil.copy2(item, dest)
+                elif item.is_dir():
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(item, dest)
+            main_src = None
+            for candidate in ["OptiScaler.dll", "dxgi.dll", "winmm.dll"]:
+                p = OPTISCALER_DIR / candidate
+                if p.exists():
+                    main_src = p
+                    break
+            if main_src and main_src.name.lower() != dll_name.lower():
+                src_in_game = folder / main_src.name
+                renamed = folder / dll_name
+                if src_in_game.exists():
+                    shutil.copy2(src_in_game, renamed)
+            key = str(folder.resolve())
+            self.applied[key] = {"dll": dll_name, "scaler": self.config.get("scaler"), "time": time.strftime("%Y-%m-%d %H:%M")}
+            self._save_applied()
+            self.refresh_games()
+            self.apply_status.configure(text=f"Applied to {folder.name}", text_color=ACCENT)
+        except Exception as e:
+            self.apply_status.configure(text=f"Failed: {e}", text_color=RED)
 
     def scan_games(self):
         found = []

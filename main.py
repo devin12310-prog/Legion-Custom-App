@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Legion Custom App v1.5.0 - Apply scalers & frame gen from the app"""
+"""Legion Custom App v2.0.0 - Multi-page Legion Space style UI"""
 
 import customtkinter as ctk
 import subprocess, os, sys, webbrowser, json, threading, time, shutil, tempfile, zipfile
 from pathlib import Path
 import urllib.request
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
 try:
     import psutil
@@ -13,7 +13,7 @@ except ImportError:
     psutil = None
 
 APP_NAME = "Legion Custom"
-APP_VERSION = "1.5.0"
+APP_VERSION = "2.0.0"
 GITHUB_REPO = "devin12310-prog/Legion-Custom-App"
 GITHUB_PAGE = f"https://github.com/{GITHUB_REPO}"
 GITHUB_ZIP = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
@@ -21,476 +21,522 @@ GITHUB_ZIP = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
 APP_DIR = Path(__file__).parent.resolve()
 CONFIG_FILE = APP_DIR / "config.json"
 OPTISCALER_DIR = APP_DIR / "OptiScaler"
-APPLIED_LOG = APP_DIR / "applied_games.json"  # track where we installed OptiScaler
+APPLIED_LOG = APP_DIR / "applied_games.json"
 
-LENOVO_AMD_DRIVER_URL = "https://support.lenovo.com/us/en/products/laptops-and-netbooks/legion-series/legion-go-8apu1/downloads/ds565497-amd-graphics-driver-for-windows-11-64-bit-legion-go-8apu1"
+LENOVO_AMD_URL = "https://support.lenovo.com/us/en/products/laptops-and-netbooks/legion-series/legion-go-8apu1/downloads/ds565497-amd-graphics-driver-for-windows-11-64-bit-legion-go-8apu1"
 
-LEGION_SPACE_PROCESSES = [
+LEGION_PROCS = [
     "LegionSpace.exe", "LSDaemon.exe", "LegionSettingMenu.exe",
     "LegionGameWidget.exe", "LegionGameWidget_Sub.exe",
     "LegionSpaceComponent.exe", "LegionSpaceToast.exe",
 ]
 
-# Common DLL names OptiScaler can replace
-OPTI_DLL_CANDIDATES = ["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll"]
-
-DEFAULT_CONFIG = {
-    "tdp": 25, "preset": "Balanced", "fan_mode": "Smart",
-    "scaler": "None", "frame_gen": "Off",
-    "resolution": "1600x1000", "refresh": 144,
-    "opti_dll_name": "dxgi.dll",
+DEFAULT = {
+    "tdp": 25, "preset": "Balanced", "fan": "Smart",
+    "scaler": "None", "fg": "Off", "res": "1600x1000", "hz": 144,
+    "dll": "dxgi.dll",
 }
 
-BG, PANEL, CARD = "#0d1117", "#161b22", "#1c2333"
-ACCENT, ACCENT_DIM = "#00d2a0", "#00a87e"
-BLUE, RED, ORANGE = "#3d7eff", "#ff4757", "#ffa502"
-TEXT, TEXT_DIM, TEXT_MUTED = "#e6edf3", "#8b949e", "#484f58"
-PILL = "#21262d"
+# Legion Space-like palette
+BG = "#0a0e14"
+SIDE = "#0f141c"
+CARD = "#151c28"
+CARD2 = "#1a2332"
+ACCENT = "#00d4aa"
+ACCENT2 = "#00b894"
+BLUE = "#3d8bfd"
+RED = "#ff4757"
+ORANGE = "#ffa502"
+TEXT = "#e8eef7"
+DIM = "#8b9bb4"
+MUTED = "#4a5568"
+PILL = "#1e2836"
 
 ctk.set_appearance_mode("dark")
 
 
-class LegionCustomApp(ctk.CTk):
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title(f"{APP_NAME}  v{APP_VERSION}")
+        self.title(f"{APP_NAME} v{APP_VERSION}")
         self.geometry("1600x1000")
-        self.minsize(1200, 800)
+        self.minsize(1280, 800)
         self.configure(fg_color=BG)
         self.attributes("-topmost", True)
-        self.after(400, lambda: self.attributes("-topmost", False))
+        self.after(500, lambda: self.attributes("-topmost", False))
 
-        self.config = self._load()
-        self.applied = self._load_applied()
-        self.menu_open = False
+        self.cfg = self._load(CONFIG_FILE, DEFAULT)
+        self.applied = self._load(APPLIED_LOG, {})
         self.busy = False
-        self.games = []
+        self.page = "home"
+        self.pages = {}
 
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=0)
+        self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self._build_main()
-        self._build_menu()
+        self._sidebar()
+        self._content()
+        self._build_pages()
+        self.show("home")
 
-        self.bind("<Control-Shift-L>", lambda e: self.toggle_menu())
-        self.bind("<F1>", lambda e: self.toggle_menu())
-        self.bind("<Escape>", lambda e: self.close_menu())
-
+        self.bind("<F1>", lambda e: self.show("perf"))
+        self.bind("<Escape>", lambda e: self.show("home"))
         if "--menu" in sys.argv:
-            self.after(250, self.open_menu)
+            self.after(200, lambda: self.show("perf"))
 
-        self.after(300, self.refresh_games)
-        self.after(500, self.refresh_tools)
-        self.after(800, self._stats_loop)
+        self.after(400, self.refresh_games)
+        self.after(600, self.refresh_tools)
+        self.after(1000, self._stats)
 
-    def _load(self):
-        if CONFIG_FILE.exists():
+    def _load(self, path, default):
+        if Path(path).exists():
             try:
-                return {**DEFAULT_CONFIG, **json.loads(CONFIG_FILE.read_text())}
+                return {**default, **json.loads(Path(path).read_text())}
             except Exception:
                 pass
-        return DEFAULT_CONFIG.copy()
+        return default.copy() if isinstance(default, dict) else default
 
-    def _save(self):
+    def _save(self, path, data):
         try:
-            CONFIG_FILE.write_text(json.dumps(self.config, indent=2))
-        except Exception:
-            pass
-
-    def _load_applied(self):
-        if APPLIED_LOG.exists():
-            try:
-                return json.loads(APPLIED_LOG.read_text())
-            except Exception:
-                pass
-        return {}
-
-    def _save_applied(self):
-        try:
-            APPLIED_LOG.write_text(json.dumps(self.applied, indent=2))
+            Path(path).write_text(json.dumps(data, indent=2))
         except Exception:
             pass
 
     def setc(self, k, v):
-        self.config[k] = v
-        self._save()
+        self.cfg[k] = v
+        self._save(CONFIG_FILE, self.cfg)
 
-    # ================= MAIN =================
-    def _build_main(self):
-        self.main = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
-        self.main.grid(row=0, column=0, sticky="nsew")
-        self.main.grid_columnconfigure(0, weight=1)
-        self.main.grid_rowconfigure(1, weight=1)
+    # ========== SIDEBAR (Legion Space style icons) ==========
+    def _sidebar(self):
+        side = ctk.CTkFrame(self, width=88, fg_color=SIDE, corner_radius=0)
+        side.grid(row=0, column=0, sticky="nsw")
+        side.grid_propagate(False)
 
-        top = ctk.CTkFrame(self.main, height=72, fg_color=PANEL, corner_radius=0)
-        top.grid(row=0, column=0, sticky="ew")
-        top.grid_propagate(False)
+        ctk.CTkLabel(side, text="LC", font=ctk.CTkFont(size=20, weight="bold"),
+                     text_color=ACCENT).pack(pady=(24, 28))
 
-        ctk.CTkLabel(top, text="LEGION CUSTOM",
-                     font=ctk.CTkFont(size=22, weight="bold"), text_color=TEXT).pack(side="left", padx=24, pady=18)
-        ctk.CTkLabel(top, text=f"v{APP_VERSION}", font=ctk.CTkFont(size=13),
-                     text_color=TEXT_MUTED).pack(side="left")
+        self.nav_btns = {}
+        items = [
+            ("home", "Games", "🎮"),
+            ("perf", "Perf", "⚡"),
+            ("display", "Display", "🖥"),
+            ("scaler", "Scaler", "🔍"),
+            ("fg", "FrameGen", "⧖"),
+            ("drivers", "Drivers", "🛠"),
+            ("settings", "Settings", "⚙"),
+        ]
+        for key, label, icon in items:
+            f = ctk.CTkFrame(side, fg_color="transparent")
+            f.pack(fill="x", pady=4)
+            b = ctk.CTkButton(
+                f, text=f"{icon}\n{label}", width=72, height=64,
+                font=ctk.CTkFont(size=11), fg_color="transparent",
+                hover_color=CARD, text_color=DIM,
+                command=lambda k=key: self.show(k)
+            )
+            b.pack()
+            self.nav_btns[key] = b
 
-        self.menu_btn = ctk.CTkButton(
-            top, text="Quick Menu  ▶", width=170, height=44,
-            font=ctk.CTkFont(size=15, weight="bold"),
-            fg_color=ACCENT, hover_color=ACCENT_DIM, text_color="#000",
-            command=self.toggle_menu
-        )
-        self.menu_btn.pack(side="right", padx=20)
+        ctk.CTkLabel(side, text=f"v{APP_VERSION}", font=ctk.CTkFont(size=10),
+                     text_color=MUTED).pack(side="bottom", pady=16)
 
-        body = ctk.CTkFrame(self.main, fg_color="transparent")
-        body.grid(row=1, column=0, sticky="nsew", padx=20, pady=16)
-        body.grid_columnconfigure(0, weight=1)
-        body.grid_rowconfigure(1, weight=1)
+    def _content(self):
+        self.content = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        self.content.grid(row=0, column=1, sticky="nsew")
+        self.content.grid_columnconfigure(0, weight=1)
+        self.content.grid_rowconfigure(0, weight=1)
 
-        hdr = ctk.CTkFrame(body, fg_color="transparent")
-        hdr.grid(row=0, column=0, sticky="ew", pady=(0, 12))
-        ctk.CTkLabel(hdr, text="Games", font=ctk.CTkFont(size=20, weight="bold"),
-                     text_color=TEXT).pack(side="left")
-        ctk.CTkButton(hdr, text="Refresh", width=100, height=34, fg_color=CARD,
-                      command=self.refresh_games).pack(side="right")
+    def show(self, key):
+        self.page = key
+        for k, f in self.pages.items():
+            if k == key:
+                f.grid(row=0, column=0, sticky="nsew")
+            else:
+                f.grid_remove()
+        for k, b in self.nav_btns.items():
+            if k == key:
+                b.configure(fg_color=CARD, text_color=ACCENT)
+            else:
+                b.configure(fg_color="transparent", text_color=DIM)
 
-        self.games_scroll = ctk.CTkScrollableFrame(body, fg_color=PANEL, corner_radius=16)
-        self.games_scroll.grid(row=1, column=0, sticky="nsew")
-        self.games_scroll.grid_columnconfigure((0, 1, 2, 3), weight=1)
-
-    # ================= QUICK MENU =================
-    def _build_menu(self):
-        self.menu = ctk.CTkFrame(self, width=480, fg_color=PANEL, corner_radius=0)
-        self.menu.grid(row=0, column=1, sticky="nsew")
-        self.menu.grid_propagate(False)
-        self.menu.grid_remove()
-
-        hdr = ctk.CTkFrame(self.menu, fg_color="transparent")
-        hdr.pack(fill="x", padx=16, pady=(16, 8))
-        ctk.CTkLabel(hdr, text="QUICK MENU", font=ctk.CTkFont(size=18, weight="bold"),
-                     text_color=TEXT).pack(side="left")
-        ctk.CTkButton(hdr, text="✕", width=40, height=40, fg_color="transparent",
-                      hover_color=CARD, font=ctk.CTkFont(size=16),
-                      command=self.close_menu).pack(side="right")
-
-        self.ms = ctk.CTkScrollableFrame(self.menu, fg_color="transparent")
-        self.ms.pack(fill="both", expand=True, padx=14, pady=4)
-
-        # FORCE CLOSE
-        self._sec("LEGION SPACE")
-        fc = self._card()
-        ctk.CTkButton(fc, text="FORCE CLOSE LEGION SPACE", height=48,
-                      font=ctk.CTkFont(size=14, weight="bold"),
-                      fg_color=RED, hover_color="#e03e4e",
-                      command=self.force_close).pack(fill="x", padx=14, pady=(14, 6))
-        self.fc_status = ctk.CTkLabel(fc, text="Ready", text_color=TEXT_MUTED)
-        self.fc_status.pack(anchor="w", padx=14, pady=(0, 14))
-
-        # PERFORMANCE
-        self._sec("PERFORMANCE")
-        perf = self._card()
-        row = ctk.CTkFrame(perf, fg_color="transparent")
-        row.pack(fill="x", padx=12, pady=(14, 10))
-        self.mode_btns = {}
-        for key, label in [("Performance", "High Perf"), ("Quiet", "Power Save"), ("Custom", "Custom")]:
-            b = ctk.CTkButton(row, text=label, height=44, font=ctk.CTkFont(size=13, weight="bold"),
-                              fg_color=PILL, command=lambda k=key: self.set_mode(k))
-            b.pack(side="left", expand=True, fill="x", padx=3)
-            self.mode_btns[key] = b
-        self._hl_mode()
-
-        stats = ctk.CTkFrame(perf, fg_color="transparent")
-        stats.pack(fill="x", padx=12, pady=(0, 14))
-        self.stat_lbls = {}
-        for k, n in [("cpu", "CPU"), ("gpu", "GPU"), ("vram", "VRAM"), ("ram", "RAM")]:
-            box = ctk.CTkFrame(stats, fg_color=PILL, corner_radius=12)
-            box.pack(side="left", expand=True, fill="x", padx=3)
-            self.stat_lbls[k] = ctk.CTkLabel(box, text="--%", font=ctk.CTkFont(size=18, weight="bold"), text_color=ACCENT)
-            self.stat_lbls[k].pack(pady=(12, 0))
-            ctk.CTkLabel(box, text=n, font=ctk.CTkFont(size=12), text_color=TEXT_DIM).pack(pady=(0, 12))
-
-        # TDP
-        self._sec("TDP / THERMAL")
-        tdpf = self._card()
-        trow = ctk.CTkFrame(tdpf, fg_color="transparent")
-        trow.pack(fill="x", padx=12, pady=(14, 8))
-        self.tdp_btns = {}
-        for key in ["Quiet", "Balanced", "Performance", "Custom"]:
-            b = ctk.CTkButton(trow, text=key, height=38, font=ctk.CTkFont(size=12),
-                              fg_color=PILL, command=lambda k=key: self.set_tdp_mode(k))
-            b.pack(side="left", expand=True, fill="x", padx=2)
-            self.tdp_btns[key] = b
-        self._hl_tdp()
-
-        self.tdp_slider = ctk.CTkSlider(tdpf, from_=8, to=40, number_of_steps=32,
-                                        progress_color=ACCENT, button_color=ACCENT, command=self.on_tdp)
-        self.tdp_slider.set(self.config.get("tdp", 25))
-        self.tdp_slider.pack(fill="x", padx=16, pady=(8, 4))
-        self.tdp_val = ctk.CTkLabel(tdpf, text=f"{int(self.config.get('tdp',25))} W",
-                                    font=ctk.CTkFont(size=18, weight="bold"), text_color=TEXT)
-        self.tdp_val.pack(pady=(0, 6))
-        ctk.CTkButton(tdpf, text="Apply TDP", height=40, fg_color=ACCENT, hover_color=ACCENT_DIM,
-                      text_color="#000", font=ctk.CTkFont(size=14, weight="bold"),
-                      command=self.apply_tdp).pack(fill="x", padx=14, pady=(0, 14))
-
-        # FAN
-        self._sec("FAN")
-        fanf = self._card()
-        frow = ctk.CTkFrame(fanf, fg_color="transparent")
-        frow.pack(fill="x", padx=12, pady=(14, 10))
-        self.fan_btns = {}
-        for key, label in [("Smart", "Smart"), ("Full", "Full Speed")]:
-            b = ctk.CTkButton(frow, text=label, height=42, font=ctk.CTkFont(size=14, weight="bold"),
-                              fg_color=PILL, command=lambda k=key: self.set_fan(k))
-            b.pack(side="left", expand=True, fill="x", padx=3)
-            self.fan_btns[key] = b
-        self._hl_fan()
-        self.fan_canvas = ctk.CTkCanvas(fanf, height=100, bg=PILL, highlightthickness=0)
-        self.fan_canvas.pack(fill="x", padx=14, pady=(0, 14))
-        self.after(200, self.draw_fan)
-
-        # DISPLAY
-        self._sec("DISPLAY")
-        disp = self._card()
-        ctk.CTkLabel(disp, text="Resolution", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(14, 6))
-        rrow = ctk.CTkFrame(disp, fg_color="transparent")
-        rrow.pack(fill="x", padx=10, pady=(0, 10))
-        self.res_btns = {}
-        for res in ["1280x800", "1600x1000", "1920x1200"]:
-            b = ctk.CTkButton(rrow, text=res, height=38, font=ctk.CTkFont(size=12),
-                              fg_color=PILL, command=lambda r=res: self.set_res(r))
-            b.pack(side="left", expand=True, fill="x", padx=3)
-            self.res_btns[res] = b
-        self._hl_res()
-
-        ctk.CTkLabel(disp, text="Refresh Rate", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(4, 6))
-        hzrow = ctk.CTkFrame(disp, fg_color="transparent")
-        hzrow.pack(fill="x", padx=10, pady=(0, 14))
-        self.ref_btns = {}
-        for hz in [60, 144]:
-            b = ctk.CTkButton(hzrow, text=f"{hz} Hz", height=38, font=ctk.CTkFont(size=13, weight="bold"),
-                              fg_color=PILL, command=lambda h=hz: self.set_ref(h))
-            b.pack(side="left", expand=True, fill="x", padx=3)
-            self.ref_btns[hz] = b
-        self._hl_ref()
-
-        # ===== UPSCALER + APPLY =====
-        self._sec("UPSCALER")
-        upsf = self._card()
-        ctk.CTkLabel(upsf, text="Preferred upscaler", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(14, 6))
-        self.scaler_var = ctk.StringVar(value=self.config.get("scaler", "None"))
-        ctk.CTkOptionMenu(
-            upsf,
-            values=["None", "FSR 2 / 3 / 4", "XeSS", "OptiScaler (Auto)", "DLSS Spoof"],
-            variable=self.scaler_var,
-            command=lambda v: self.setc("scaler", v),
-            height=40, font=ctk.CTkFont(size=14),
-            fg_color=PILL, button_color=ACCENT
-        ).pack(fill="x", padx=14, pady=(0, 8))
-
-        ctk.CTkLabel(upsf, text="DLL name to use", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(4, 4))
-        self.dll_var = ctk.StringVar(value=self.config.get("opti_dll_name", "dxgi.dll"))
-        ctk.CTkOptionMenu(
-            upsf, values=OPTI_DLL_CANDIDATES, variable=self.dll_var,
-            command=lambda v: self.setc("opti_dll_name", v),
-            height=36, fg_color=PILL, button_color=ACCENT
-        ).pack(fill="x", padx=14, pady=(0, 10))
-
-        self.opti_status = ctk.CTkLabel(upsf, text="Checking OptiScaler...", text_color=TEXT_DIM,
-                                        font=ctk.CTkFont(size=12))
-        self.opti_status.pack(anchor="w", padx=14, pady=(0, 6))
-
-        brow = ctk.CTkFrame(upsf, fg_color="transparent")
-        brow.pack(fill="x", padx=12, pady=(0, 6))
-        self.opti_dl_btn = ctk.CTkButton(brow, text="Download OptiScaler", height=40,
-                                         fg_color=ACCENT, hover_color=ACCENT_DIM, text_color="#000",
-                                         command=self.download_optiscaler)
-        self.opti_dl_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        ctk.CTkButton(brow, text="Folder", width=70, height=40, fg_color=PILL,
-                      command=self.open_opti_folder).pack(side="left")
-
-        # Apply / Remove to game
-        arow = ctk.CTkFrame(upsf, fg_color="transparent")
-        arow.pack(fill="x", padx=12, pady=(4, 6))
-        ctk.CTkButton(arow, text="Apply to Game Folder...", height=42,
-                      font=ctk.CTkFont(size=13, weight="bold"),
-                      fg_color=BLUE, hover_color="#2a5fd4",
-                      command=self.apply_opti_to_folder).pack(side="left", expand=True, fill="x", padx=(0, 4))
-        ctk.CTkButton(arow, text="Remove from Folder...", height=42,
-                      font=ctk.CTkFont(size=13, weight="bold"),
-                      fg_color=RED, hover_color="#e03e4e",
-                      command=self.remove_opti_from_folder).pack(side="left", expand=True, fill="x", padx=(4, 0))
-
-        self.apply_status = ctk.CTkLabel(upsf, text="Pick a game folder to install/remove OptiScaler",
-                                         text_color=TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left")
-        self.apply_status.pack(anchor="w", padx=14, pady=(0, 14))
-
-        # ===== FRAME GEN =====
-        self._sec("FRAME GENERATION")
-        fgf = self._card()
-        ctk.CTkLabel(fgf, text="Preferred frame gen", text_color=TEXT_DIM).pack(anchor="w", padx=14, pady=(14, 6))
-        self.fg_var = ctk.StringVar(value=self.config.get("frame_gen", "Off"))
-        ctk.CTkOptionMenu(
-            fgf,
-            values=["Off", "Lossless Scaling (LSFG)", "AMD AFMF", "OptiFG", "XeFG"],
-            variable=self.fg_var,
-            command=self.on_fg_change,
-            height=40, font=ctk.CTkFont(size=14),
-            fg_color=PILL, button_color=ACCENT
-        ).pack(fill="x", padx=14, pady=(0, 8))
-
-        self.fg_status = ctk.CTkLabel(fgf, text="Checking...", text_color=TEXT_DIM,
-                                      font=ctk.CTkFont(size=12))
-        self.fg_status.pack(anchor="w", padx=14, pady=(0, 6))
-
-        self.lossless_btn = ctk.CTkButton(fgf, text="Launch Lossless Scaling", height=44,
-                                          font=ctk.CTkFont(size=14, weight="bold"),
-                                          fg_color=BLUE, hover_color="#2a5fd4",
-                                          command=self.launch_lossless)
-        self.lossless_btn.pack(fill="x", padx=14, pady=(0, 6))
-
-        ctk.CTkLabel(fgf,
-                     text="LSFG: launch Lossless Scaling then enable in its overlay\n"
-                          "AFMF: enable in AMD Adrenalin \u2192 Graphics\n"
-                          "OptiFG / XeFG: use after applying OptiScaler to the game",
-                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11), justify="left").pack(
-            anchor="w", padx=14, pady=(0, 14))
-
-        # DRIVERS
-        self._sec("DRIVERS")
-        dr = self._card()
-        ctk.CTkButton(dr, text="AMD Adrenalin 25.30.44 (Legion Go)", height=46,
-                      font=ctk.CTkFont(size=14, weight="bold"),
-                      fg_color=ORANGE, hover_color="#e69500",
-                      command=lambda: webbrowser.open(LENOVO_AMD_DRIVER_URL)).pack(fill="x", padx=14, pady=14)
-
-        # UPDATES
-        self._sec("APP UPDATES")
-        up = self._card()
-        self.upd_status = ctk.CTkLabel(up, text=f"Current version: {APP_VERSION}",
-                                       text_color=TEXT_DIM, font=ctk.CTkFont(size=13))
-        self.upd_status.pack(anchor="w", padx=14, pady=(14, 8))
-        self.upd_btn = ctk.CTkButton(up, text="Check & Update from GitHub", height=46,
-                                     font=ctk.CTkFont(size=14, weight="bold"),
-                                     fg_color=ACCENT, hover_color=ACCENT_DIM, text_color="#000",
-                                     command=self.do_update)
-        self.upd_btn.pack(fill="x", padx=14, pady=(0, 6))
-        ctk.CTkButton(up, text="Open GitHub Page", height=38, fg_color=PILL,
-                      command=lambda: webbrowser.open(GITHUB_PAGE)).pack(fill="x", padx=14, pady=(0, 14))
-
-    def _sec(self, t):
-        ctk.CTkLabel(self.ms, text=t, font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=TEXT_MUTED, anchor="w").pack(fill="x", pady=(20, 6), padx=2)
-
-    def _card(self):
-        f = ctk.CTkFrame(self.ms, fg_color=CARD, corner_radius=14)
-        f.pack(fill="x", pady=(0, 6))
+    def _page(self):
+        f = ctk.CTkFrame(self.content, fg_color=BG, corner_radius=0)
+        f.grid_columnconfigure(0, weight=1)
+        f.grid_rowconfigure(1, weight=1)
         return f
 
-    # ---------- menu ----------
-    def toggle_menu(self):
-        if self.menu_open:
-            self.close_menu()
-        else:
-            self.open_menu()
+    def _title(self, parent, text):
+        ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=26, weight="bold"),
+                     text_color=TEXT).grid(row=0, column=0, sticky="w", padx=28, pady=(24, 12))
 
-    def open_menu(self):
-        self.menu.grid()
-        self.menu_open = True
-        self.menu_btn.configure(text="Close Menu  ◀")
-        self.update_idletasks()
-        self.draw_fan()
+    def _scroll(self, parent):
+        s = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        s.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 16))
+        s.grid_columnconfigure(0, weight=1)
+        return s
 
-    def close_menu(self):
-        self.menu.grid_remove()
-        self.menu_open = False
-        self.menu_btn.configure(text="Quick Menu  ▶")
+    def _card(self, parent, **kw):
+        c = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=16, **kw)
+        c.pack(fill="x", pady=8, padx=4)
+        return c
 
-    # ---------- helpers ----------
-    def _hl(self, btns, cur):
-        for k, b in btns.items():
-            b.configure(fg_color=ACCENT if k == cur else PILL,
-                        text_color="#000" if k == cur else TEXT)
+    def _h(self, parent, text):
+        ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=DIM).pack(anchor="w", padx=20, pady=(16, 8))
 
-    def _hl_mode(self):
-        cur = self.config.get("preset", "Balanced")
-        self._hl(self.mode_btns, "Custom" if cur == "Balanced" else cur)
+    # ========== BUILD ALL PAGES ==========
+    def _build_pages(self):
+        self._page_home()
+        self._page_perf()
+        self._page_display()
+        self._page_scaler()
+        self._page_fg()
+        self._page_drivers()
+        self._page_settings()
 
-    def _hl_tdp(self):
-        self._hl(self.tdp_btns, self.config.get("preset", "Balanced"))
+    # ----- HOME / GAMES -----
+    def _page_home(self):
+        p = self._page()
+        self.pages["home"] = p
+        top = ctk.CTkFrame(p, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", padx=28, pady=(24, 8))
+        ctk.CTkLabel(top, text="Games", font=ctk.CTkFont(size=26, weight="bold"),
+                     text_color=TEXT).pack(side="left")
+        ctk.CTkButton(top, text="Refresh", width=110, height=36, fg_color=CARD,
+                      command=self.refresh_games).pack(side="right")
 
-    def _hl_fan(self):
-        self._hl(self.fan_btns, self.config.get("fan_mode", "Smart"))
+        self.games_frame = ctk.CTkScrollableFrame(p, fg_color="transparent")
+        self.games_frame.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        self.games_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-    def _hl_res(self):
-        self._hl(self.res_btns, self.config.get("resolution", "1600x1000"))
+        # Quick force close bar
+        bar = ctk.CTkFrame(p, fg_color=CARD, height=56, corner_radius=0)
+        bar.grid(row=2, column=0, sticky="ew")
+        ctk.CTkButton(bar, text="Force Close Legion Space", height=40,
+                      fg_color=RED, hover_color="#e03e4e",
+                      font=ctk.CTkFont(weight="bold"),
+                      command=self.force_close).pack(side="left", padx=16, pady=8)
+        self.fc_lbl = ctk.CTkLabel(bar, text="", text_color=DIM)
+        self.fc_lbl.pack(side="left", padx=8)
 
-    def _hl_ref(self):
-        self._hl(self.ref_btns, int(self.config.get("refresh", 144)))
+    # ----- PERFORMANCE -----
+    def _page_perf(self):
+        p = self._page()
+        self.pages["perf"] = p
+        self._title(p, "Performance")
+        s = self._scroll(p)
 
-    def set_mode(self, key):
-        m = {"Performance": 35, "Quiet": 15, "Custom": self.config.get("tdp", 25)}
+        # Recommended presets
+        self._h(s, "RECOMMENDED PRESETS")
+        c = self._card(s)
+        row = ctk.CTkFrame(c, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=16)
+        presets = [
+            ("Quiet", "15W \u00b7 Cool & quiet", 15),
+            ("Balanced", "25W \u00b7 Best everyday", 25),
+            ("Performance", "35W \u00b7 Max power", 35),
+        ]
+        self.preset_btns = {}
+        for key, desc, tdp in presets:
+            f = ctk.CTkFrame(row, fg_color=PILL, corner_radius=12)
+            f.pack(side="left", expand=True, fill="both", padx=6)
+            b = ctk.CTkButton(f, text=key, height=40, font=ctk.CTkFont(size=15, weight="bold"),
+                              fg_color="transparent", text_color=TEXT,
+                              command=lambda k=key, t=tdp: self.apply_preset(k, t))
+            b.pack(fill="x", padx=8, pady=(12, 0))
+            ctk.CTkLabel(f, text=desc, text_color=DIM, font=ctk.CTkFont(size=12)).pack(pady=(0, 12))
+            self.preset_btns[key] = f
+
+        # Live stats
+        self._h(s, "LIVE STATS")
+        c = self._card(s)
+        stats = ctk.CTkFrame(c, fg_color="transparent")
+        stats.pack(fill="x", padx=16, pady=16)
+        self.stat = {}
+        for k, n in [("cpu", "CPU"), ("gpu", "GPU"), ("vram", "VRAM"), ("ram", "RAM")]:
+            box = ctk.CTkFrame(stats, fg_color=PILL, corner_radius=12)
+            box.pack(side="left", expand=True, fill="x", padx=6)
+            self.stat[k] = ctk.CTkLabel(box, text="--%", font=ctk.CTkFont(size=22, weight="bold"), text_color=ACCENT)
+            self.stat[k].pack(pady=(16, 0))
+            ctk.CTkLabel(box, text=n, text_color=DIM).pack(pady=(0, 16))
+
+        # TDP
+        self._h(s, "TDP LIMIT")
+        c = self._card(s)
+        self.tdp_lbl = ctk.CTkLabel(c, text=f"{self.cfg.get('tdp',25)} W",
+                                    font=ctk.CTkFont(size=28, weight="bold"), text_color=TEXT)
+        self.tdp_lbl.pack(pady=(20, 8))
+        self.tdp_slider = ctk.CTkSlider(c, from_=8, to=40, number_of_steps=32,
+                                        progress_color=ACCENT, button_color=ACCENT,
+                                        command=self.on_tdp)
+        self.tdp_slider.set(self.cfg.get("tdp", 25))
+        self.tdp_slider.pack(fill="x", padx=24, pady=8)
+        ctk.CTkButton(c, text="Apply TDP", height=48, fg_color=ACCENT, hover_color=ACCENT2,
+                      text_color="#000", font=ctk.CTkFont(size=15, weight="bold"),
+                      command=self.apply_tdp).pack(fill="x", padx=20, pady=(8, 20))
+
+        # Fan
+        self._h(s, "FAN")
+        c = self._card(s)
+        frow = ctk.CTkFrame(c, fg_color="transparent")
+        frow.pack(fill="x", padx=16, pady=16)
+        self.fan_btns = {}
+        for key, label in [("Smart", "Smart (Recommended)"), ("Full", "Full Speed")]:
+            b = ctk.CTkButton(frow, text=label, height=48, font=ctk.CTkFont(size=14, weight="bold"),
+                              fg_color=PILL, command=lambda k=key: self.set_fan(k))
+            b.pack(side="left", expand=True, fill="x", padx=6)
+            self.fan_btns[key] = b
+        self._hl_fan()
+
+    # ----- DISPLAY -----
+    def _page_display(self):
+        p = self._page()
+        self.pages["display"] = p
+        self._title(p, "Display")
+        s = self._scroll(p)
+
+        self._h(s, "RESOLUTION  (Legion Go native)")
+        c = self._card(s)
+        rrow = ctk.CTkFrame(c, fg_color="transparent")
+        rrow.pack(fill="x", padx=16, pady=16)
+        self.res_btns = {}
+        for res, note in [("1280x800", "Light"), ("1600x1000", "Recommended"), ("1920x1200", "Sharp")]:
+            f = ctk.CTkFrame(rrow, fg_color=PILL, corner_radius=12)
+            f.pack(side="left", expand=True, fill="both", padx=6)
+            b = ctk.CTkButton(f, text=res, height=40, font=ctk.CTkFont(size=14, weight="bold"),
+                              fg_color="transparent", command=lambda r=res: self.set_res(r))
+            b.pack(fill="x", pady=(12, 0), padx=8)
+            ctk.CTkLabel(f, text=note, text_color=DIM).pack(pady=(0, 12))
+            self.res_btns[res] = f
+        self._hl_res()
+
+        self._h(s, "REFRESH RATE")
+        c = self._card(s)
+        hrow = ctk.CTkFrame(c, fg_color="transparent")
+        hrow.pack(fill="x", padx=16, pady=16)
+        self.hz_btns = {}
+        for hz, note in [(60, "Battery"), (144, "Recommended")]:
+            f = ctk.CTkFrame(hrow, fg_color=PILL, corner_radius=12)
+            f.pack(side="left", expand=True, fill="both", padx=6)
+            b = ctk.CTkButton(f, text=f"{hz} Hz", height=44, font=ctk.CTkFont(size=16, weight="bold"),
+                              fg_color="transparent", command=lambda h=hz: self.set_hz(h))
+            b.pack(fill="x", pady=(12, 0), padx=8)
+            ctk.CTkLabel(f, text=note, text_color=DIM).pack(pady=(0, 12))
+            self.hz_btns[hz] = f
+        self._hl_hz()
+
+    # ----- SCALER -----
+    def _page_scaler(self):
+        p = self._page()
+        self.pages["scaler"] = p
+        self._title(p, "Upscaler")
+        s = self._scroll(p)
+
+        self._h(s, "SELECT UPSCALER")
+        c = self._card(s)
+        self.scaler_var = ctk.StringVar(value=self.cfg.get("scaler", "None"))
+        ctk.CTkOptionMenu(
+            c, values=["None", "FSR 2 / 3 / 4", "XeSS", "OptiScaler (Auto)", "DLSS Spoof"],
+            variable=self.scaler_var, command=lambda v: self.setc("scaler", v),
+            height=48, font=ctk.CTkFont(size=15), fg_color=PILL, button_color=ACCENT
+        ).pack(fill="x", padx=20, pady=16)
+
+        self._h(s, "OPTISCALER")
+        c = self._card(s)
+        self.opti_status = ctk.CTkLabel(c, text="Checking...", text_color=DIM,
+                                        font=ctk.CTkFont(size=14))
+        self.opti_status.pack(anchor="w", padx=20, pady=(16, 8))
+
+        ctk.CTkLabel(c, text="DLL name", text_color=DIM).pack(anchor="w", padx=20)
+        self.dll_var = ctk.StringVar(value=self.cfg.get("dll", "dxgi.dll"))
+        ctk.CTkOptionMenu(
+            c, values=["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll"],
+            variable=self.dll_var, command=lambda v: self.setc("dll", v),
+            height=40, fg_color=PILL, button_color=ACCENT
+        ).pack(fill="x", padx=20, pady=(4, 12))
+
+        row = ctk.CTkFrame(c, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(0, 8))
+        self.opti_dl = ctk.CTkButton(row, text="Download / Update OptiScaler", height=48,
+                                     font=ctk.CTkFont(size=14, weight="bold"),
+                                     fg_color=ACCENT, hover_color=ACCENT2, text_color="#000",
+                                     command=self.download_opti)
+        self.opti_dl.pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ctk.CTkButton(row, text="Open Folder", width=120, height=48, fg_color=PILL,
+                      command=self.open_opti).pack(side="left")
+
+        row2 = ctk.CTkFrame(c, fg_color="transparent")
+        row2.pack(fill="x", padx=16, pady=(0, 8))
+        ctk.CTkButton(row2, text="Apply to Game Folder", height=48,
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      fg_color=BLUE, command=self.apply_opti).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ctk.CTkButton(row2, text="Remove from Folder", height=48,
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      fg_color=RED, command=self.remove_opti).pack(side="left", expand=True, fill="x")
+
+        self.apply_lbl = ctk.CTkLabel(c, text="Apply copies OptiScaler into a game so it loads on launch",
+                                      text_color=MUTED, font=ctk.CTkFont(size=12))
+        self.apply_lbl.pack(anchor="w", padx=20, pady=(4, 16))
+
+        self._h(s, "RECOMMENDED")
+        c = self._card(s)
+        ctk.CTkLabel(c, text="Most Legion Go games: OptiScaler + FSR or XeSS\n"
+                             "DLL: try dxgi.dll first, then winmm.dll if it fails\n"
+                             "Remove when you want stock game behavior",
+                     text_color=TEXT, font=ctk.CTkFont(size=14), justify="left").pack(
+            anchor="w", padx=20, pady=16)
+
+    # ----- FRAME GEN -----
+    def _page_fg(self):
+        p = self._page()
+        self.pages["fg"] = p
+        self._title(p, "Frame Generation")
+        s = self._scroll(p)
+
+        self._h(s, "SELECT METHOD")
+        c = self._card(s)
+        self.fg_var = ctk.StringVar(value=self.cfg.get("fg", "Off"))
+        ctk.CTkOptionMenu(
+            c, values=["Off", "Lossless Scaling (LSFG)", "AMD AFMF", "OptiFG", "XeFG"],
+            variable=self.fg_var, command=self.on_fg,
+            height=48, font=ctk.CTkFont(size=15), fg_color=PILL, button_color=ACCENT
+        ).pack(fill="x", padx=20, pady=16)
+
+        self.fg_status = ctk.CTkLabel(c, text="", text_color=DIM, font=ctk.CTkFont(size=13))
+        self.fg_status.pack(anchor="w", padx=20, pady=(0, 8))
+
+        self.ls_btn = ctk.CTkButton(c, text="Launch Lossless Scaling", height=52,
+                                    font=ctk.CTkFont(size=15, weight="bold"),
+                                    fg_color=BLUE, command=self.launch_ls)
+        self.ls_btn.pack(fill="x", padx=20, pady=(0, 16))
+
+        self._h(s, "BEST OPTIONS FOR LEGION GO")
+        c = self._card(s)
+        tips = (
+            "1. Lossless Scaling (LSFG) \u2014 best general FG, launch from here\n"
+            "2. AMD AFMF \u2014 enable in Adrenalin, lowest overhead\n"
+            "3. OptiFG / XeFG \u2014 after applying OptiScaler to the game\n\n"
+            "Tip: Leave FG Off when you want max battery / lowest latency"
+        )
+        ctk.CTkLabel(c, text=tips, text_color=TEXT, font=ctk.CTkFont(size=14),
+                     justify="left").pack(anchor="w", padx=20, pady=16)
+
+    # ----- DRIVERS -----
+    def _page_drivers(self):
+        p = self._page()
+        self.pages["drivers"] = p
+        self._title(p, "Drivers")
+        s = self._scroll(p)
+
+        self._h(s, "OFFICIAL LEGION GO DRIVER")
+        c = self._card(s)
+        ctk.CTkLabel(c, text="AMD Adrenalin 25.30.44", font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=TEXT).pack(anchor="w", padx=20, pady=(16, 4))
+        ctk.CTkLabel(c, text="Lenovo package for Z1 Extreme \u2014 recommended",
+                     text_color=DIM).pack(anchor="w", padx=20, pady=(0, 12))
+        ctk.CTkButton(c, text="Download AMD 25.30.44", height=52,
+                      font=ctk.CTkFont(size=15, weight="bold"),
+                      fg_color=ORANGE, hover_color="#e69500",
+                      command=lambda: webbrowser.open(LENOVO_AMD_URL)).pack(fill="x", padx=20, pady=(0, 16))
+
+        self._h(s, "LEGION SPACE")
+        c = self._card(s)
+        ctk.CTkButton(c, text="Force Close Legion Space", height=52,
+                      font=ctk.CTkFont(size=15, weight="bold"),
+                      fg_color=RED, command=self.force_close).pack(fill="x", padx=20, pady=16)
+        self.fc_lbl2 = ctk.CTkLabel(c, text="Stops button conflicts with this app", text_color=DIM)
+        self.fc_lbl2.pack(anchor="w", padx=20, pady=(0, 12))
+
+    # ----- SETTINGS -----
+    def _page_settings(self):
+        p = self._page()
+        self.pages["settings"] = p
+        self._title(p, "Settings")
+        s = self._scroll(p)
+
+        self._h(s, "APP UPDATES")
+        c = self._card(s)
+        self.upd_lbl = ctk.CTkLabel(c, text=f"Current version: {APP_VERSION}",
+                                    text_color=DIM, font=ctk.CTkFont(size=14))
+        self.upd_lbl.pack(anchor="w", padx=20, pady=(16, 8))
+        self.upd_btn = ctk.CTkButton(c, text="Check & Update from GitHub", height=52,
+                                     font=ctk.CTkFont(size=15, weight="bold"),
+                                     fg_color=ACCENT, hover_color=ACCENT2, text_color="#000",
+                                     command=self.do_update)
+        self.upd_btn.pack(fill="x", padx=20, pady=(0, 8))
+        ctk.CTkButton(c, text="Open GitHub Page", height=44, fg_color=PILL,
+                      command=lambda: webbrowser.open(GITHUB_PAGE)).pack(fill="x", padx=20, pady=(0, 16))
+
+        self._h(s, "RIGHT LEGION BUTTON")
+        c = self._card(s)
+        msg = (
+            "This app cannot capture the physical Legion button by itself.\n\n"
+            "Map it with PowerToys Keyboard Manager or AutoHotkey to run:\n\n"
+            f"  {APP_DIR / 'run.bat'} --menu\n\n"
+            "That opens the Performance page (Quick Menu equivalent)."
+        )
+        ctk.CTkLabel(c, text=msg, text_color=TEXT, font=ctk.CTkFont(size=13),
+                     justify="left").pack(anchor="w", padx=20, pady=16)
+
+        self._h(s, "HOTKEYS")
+        c = self._card(s)
+        ctk.CTkLabel(c, text="F1  \u2192 Performance page\nEsc \u2192 Games home",
+                     text_color=TEXT, font=ctk.CTkFont(size=14), justify="left").pack(
+            anchor="w", padx=20, pady=16)
+
+    # ========== ACTIONS ==========
+    def apply_preset(self, key, tdp):
         self.setc("preset", key)
-        t = m.get(key, 25)
-        self.tdp_slider.set(t)
-        self.tdp_val.configure(text=f"{t} W")
-        self.setc("tdp", t)
-        self._hl_mode(); self._hl_tdp()
-
-    def set_tdp_mode(self, key):
-        m = {"Quiet": 15, "Balanced": 25, "Performance": 35}
-        self.setc("preset", key)
-        if key in m:
-            self.tdp_slider.set(m[key])
-            self.tdp_val.configure(text=f"{m[key]} W")
-            self.setc("tdp", m[key])
-        self._hl_tdp(); self._hl_mode()
+        self.setc("tdp", tdp)
+        self.tdp_slider.set(tdp)
+        self.tdp_lbl.configure(text=f"{tdp} W")
+        for k, f in self.preset_btns.items():
+            f.configure(fg_color=ACCENT if k == key else PILL)
 
     def on_tdp(self, v):
         val = int(float(v))
-        self.tdp_val.configure(text=f"{val} W")
+        self.tdp_lbl.configure(text=f"{val} W")
         self.setc("tdp", val)
         self.setc("preset", "Custom")
-        self._hl_tdp(); self._hl_mode()
 
     def set_fan(self, key):
-        self.setc("fan_mode", key)
+        self.setc("fan", key)
         self._hl_fan()
-        self.draw_fan()
+
+    def _hl_fan(self):
+        cur = self.cfg.get("fan", "Smart")
+        for k, b in self.fan_btns.items():
+            b.configure(fg_color=ACCENT if k == cur else PILL,
+                        text_color="#000" if k == cur else TEXT)
 
     def set_res(self, r):
-        self.setc("resolution", r)
+        self.setc("res", r)
         self._hl_res()
 
-    def set_ref(self, h):
-        self.setc("refresh", h)
-        self._hl_ref()
+    def _hl_res(self):
+        cur = self.cfg.get("res", "1600x1000")
+        for k, f in self.res_btns.items():
+            f.configure(fg_color=ACCENT if k == cur else PILL)
 
-    def on_fg_change(self, v):
-        self.setc("frame_gen", v)
+    def set_hz(self, h):
+        self.setc("hz", h)
+        self._hl_hz()
+
+    def _hl_hz(self):
+        cur = int(self.cfg.get("hz", 144))
+        for k, f in self.hz_btns.items():
+            f.configure(fg_color=ACCENT if k == cur else PILL)
+
+    def on_fg(self, v):
+        self.setc("fg", v)
         if v == "Lossless Scaling (LSFG)":
-            self.fg_status.configure(text="Will use Lossless Scaling — launch it below", text_color=ACCENT)
+            self.fg_status.configure(text="Launch Lossless Scaling below, then enable FG in its overlay", text_color=ACCENT)
         elif v == "AMD AFMF":
-            self.fg_status.configure(text="Enable AFMF inside AMD Adrenalin", text_color=ORANGE)
+            self.fg_status.configure(text="Turn on AFMF inside AMD Adrenalin \u2192 Graphics", text_color=ORANGE)
         elif v in ("OptiFG", "XeFG"):
-            self.fg_status.configure(text="Apply OptiScaler to the game first", text_color=ORANGE)
+            self.fg_status.configure(text="Apply OptiScaler to the game first (Scaler page)", text_color=ORANGE)
         else:
-            self.fg_status.configure(text="Frame gen off", text_color=TEXT_DIM)
-
-    def draw_fan(self):
-        c = self.fan_canvas
-        c.delete("all")
-        w = max(c.winfo_width(), 360)
-        h = 100
-        for i in range(1, 5):
-            c.create_line(12, h - i * h / 5, w - 12, h - i * h / 5, fill="#2a303c")
-        mode = self.config.get("fan_mode", "Smart")
-        pts = [(0, .9), (.3, .95), (1, 1)] if mode == "Full" else [(0, .15), (.3, .3), (.6, .55), (1, .95)]
-        coords = []
-        for x, y in pts:
-            coords += [12 + x * (w - 24), h - 10 - y * (h - 24)]
-        if len(coords) >= 4:
-            c.create_line(*coords, fill=ACCENT, width=3, smooth=True)
-            for i in range(0, len(coords), 2):
-                c.create_oval(coords[i]-4, coords[i+1]-4, coords[i]+4, coords[i+1]+4, fill=ACCENT, outline="")
+            self.fg_status.configure(text="Frame gen off \u2014 best for battery/latency", text_color=DIM)
 
     def force_close(self):
         killed = []
@@ -498,179 +544,64 @@ class LegionCustomApp(ctk.CTk):
             for p in psutil.process_iter(["name"]):
                 try:
                     n = p.info["name"]
-                    if n and n.lower() in [x.lower() for x in LEGION_SPACE_PROCESSES]:
+                    if n and n.lower() in [x.lower() for x in LEGION_PROCS]:
                         p.kill(); killed.append(n)
                 except Exception:
                     pass
         else:
-            for name in LEGION_SPACE_PROCESSES:
+            for name in LEGION_PROCS:
                 try:
                     r = subprocess.run(["taskkill", "/F", "/IM", name], capture_output=True,
                                        creationflags=0x08000000 if sys.platform == "win32" else 0)
-                    if r.returncode == 0: killed.append(name)
+                    if r.returncode == 0:
+                        killed.append(name)
                 except Exception:
                     pass
-        if killed:
-            self.fc_status.configure(text=f"Closed: {', '.join(sorted(set(killed)))}", text_color=ACCENT)
-        else:
-            self.fc_status.configure(text="No Legion Space processes running", text_color=TEXT_MUTED)
+        msg = f"Closed: {', '.join(sorted(set(killed)))}" if killed else "No Legion Space processes found"
+        self.fc_lbl.configure(text=msg, text_color=ACCENT if killed else DIM)
+        if hasattr(self, "fc_lbl2"):
+            self.fc_lbl2.configure(text=msg, text_color=ACCENT if killed else DIM)
 
-    def _stats_loop(self):
+    def _stats(self):
         if psutil:
             try:
-                self.stat_lbls["cpu"].configure(text=f"{psutil.cpu_percent(interval=None):.0f}%")
-                self.stat_lbls["ram"].configure(text=f"{psutil.virtual_memory().percent:.0f}%")
+                self.stat["cpu"].configure(text=f"{psutil.cpu_percent(interval=None):.0f}%")
+                self.stat["ram"].configure(text=f"{psutil.virtual_memory().percent:.0f}%")
             except Exception:
                 pass
-        self.after(2000, self._stats_loop)
+        self.after(2000, self._stats)
 
-    # ---------- OptiScaler apply/remove ----------
-    def _opti_source_files(self):
-        """Return list of files to copy from OptiScaler folder."""
-        if not OPTISCALER_DIR.exists():
-            return []
-        return [p for p in OPTISCALER_DIR.rglob("*") if p.is_file()]
+    def apply_tdp(self):
+        tdp = int(self.cfg.get("tdp", 25))
+        for c in [APP_DIR / "ryzenadj.exe", Path("C:/tools/ryzenadj/ryzenadj.exe")]:
+            if c.exists():
+                try:
+                    subprocess.Popen([str(c), f"--stapm-limit={tdp*1000}",
+                                      f"--fast-limit={tdp*1000}", f"--slow-limit={tdp*1000}"],
+                                     creationflags=0x08000000 if sys.platform == "win32" else 0)
+                except Exception:
+                    pass
+                return
 
-    def apply_opti_to_folder(self):
-        if not OPTISCALER_DIR.exists() or not any(OPTISCALER_DIR.iterdir()):
-            self.apply_status.configure(text="Download OptiScaler first", text_color=RED)
-            return
-
-        folder = filedialog.askdirectory(title="Select game folder (where the .exe is)")
-        if not folder:
-            return
-        folder = Path(folder)
-
-        dll_name = self.dll_var.get() or "dxgi.dll"
-        # Find a main DLL in OptiScaler package to rename
-        src_files = list(OPTISCALER_DIR.iterdir())
-        # Prefer known entry DLLs
-        main_src = None
-        for candidate in ["OptiScaler.dll", "dxgi.dll", "winmm.dll", "version.dll"]:
-            p = OPTISCALER_DIR / candidate
-            if p.exists():
-                main_src = p
-                break
-        if main_src is None:
-            # take first dll
-            dlls = list(OPTISCALER_DIR.glob("*.dll"))
-            if dlls:
-                main_src = dlls[0]
-
-        try:
-            # Backup existing target dll if present
-            target = folder / dll_name
-            backup = folder / (dll_name + ".legionbak")
-            if target.exists() and not backup.exists():
-                shutil.copy2(target, backup)
-
-            # Copy all OptiScaler files
-            for item in OPTISCALER_DIR.iterdir():
-                dest = folder / item.name
-                if item.is_file():
-                    shutil.copy2(item, dest)
-                elif item.is_dir():
-                    if dest.exists():
-                        shutil.rmtree(dest)
-                    shutil.copytree(item, dest)
-
-            # Ensure the chosen DLL name exists (rename main if needed)
-            if main_src and main_src.name.lower() != dll_name.lower():
-                renamed = folder / dll_name
-                src_in_game = folder / main_src.name
-                if src_in_game.exists() and not renamed.exists():
-                    shutil.copy2(src_in_game, renamed)
-
-            key = str(folder.resolve())
-            self.applied[key] = {
-                "dll": dll_name,
-                "scaler": self.scaler_var.get(),
-                "time": time.strftime("%Y-%m-%d %H:%M"),
-            }
-            self._save_applied()
-
-            self.apply_status.configure(
-                text=f"Applied to:\n{folder.name}\nDLL: {dll_name}",
-                text_color=ACCENT
-            )
-        except Exception as e:
-            self.apply_status.configure(text=f"Apply failed: {e}", text_color=RED)
-
-    def remove_opti_from_folder(self):
-        folder = filedialog.askdirectory(title="Select game folder to remove OptiScaler from")
-        if not folder:
-            return
-        folder = Path(folder)
-
-        try:
-            removed = []
-            # Restore backup if we made one
-            for dll in OPTI_DLL_CANDIDATES:
-                bak = folder / (dll + ".legionbak")
-                target = folder / dll
-                if bak.exists():
-                    shutil.copy2(bak, target)
-                    bak.unlink()
-                    removed.append(f"restored {dll}")
-                elif target.exists() and (folder / "OptiScaler.dll").exists():
-                    # likely our install
-                    target.unlink()
-                    removed.append(f"removed {dll}")
-
-            # Remove other OptiScaler files we may have copied
-            for name in ["OptiScaler.dll", "OptiScaler.ini", "nvngx.dll", "libxess.dll",
-                         "amd_fidelityfx_dx12.dll", "amd_fidelityfx_vk.dll"]:
-                p = folder / name
-                if p.exists():
-                    p.unlink()
-                    removed.append(name)
-
-            key = str(folder.resolve())
-            if key in self.applied:
-                del self.applied[key]
-                self._save_applied()
-
-            if removed:
-                self.apply_status.configure(
-                    text=f"Removed from {folder.name}\n{', '.join(removed[:5])}",
-                    text_color=ACCENT
-                )
-            else:
-                self.apply_status.configure(text="Nothing OptiScaler-related found", text_color=TEXT_DIM)
-        except Exception as e:
-            self.apply_status.configure(text=f"Remove failed: {e}", text_color=RED)
-
-    def find_lossless(self):
-        cands = [
-            Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Steam/steamapps/common/Lossless Scaling/LosslessScaling.exe",
-            Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)")) / "Steam/steamapps/common/Lossless Scaling/LosslessScaling.exe",
-        ]
-        for d in "CDEF":
-            cands.append(Path(f"{d}:/SteamLibrary/steamapps/common/Lossless Scaling/LosslessScaling.exe"))
-        for p in cands:
-            if p.exists(): return p
-        return None
-
+    # OptiScaler
     def refresh_tools(self):
         if OPTISCALER_DIR.exists() and any(OPTISCALER_DIR.iterdir()):
-            self.opti_status.configure(text="OptiScaler: Installed — ready to apply", text_color=ACCENT)
-            self.opti_dl_btn.configure(text="Update OptiScaler")
+            self.opti_status.configure(text="OptiScaler: Installed \u2014 ready to apply", text_color=ACCENT)
+            self.opti_dl.configure(text="Update OptiScaler")
         else:
-            self.opti_status.configure(text="OptiScaler: Not installed", text_color=TEXT_DIM)
-            self.opti_dl_btn.configure(text="Download OptiScaler")
-
-        ls = self.find_lossless()
+            self.opti_status.configure(text="OptiScaler: Not installed", text_color=DIM)
+            self.opti_dl.configure(text="Download OptiScaler")
+        ls = self.find_ls()
         if ls:
             self.fg_status.configure(text="Lossless Scaling: Found", text_color=ACCENT)
-            self.lossless_btn.configure(text="Launch Lossless Scaling", state="normal")
         else:
-            self.fg_status.configure(text="Lossless Scaling: Not found (install on Steam)", text_color=TEXT_DIM)
+            self.fg_status.configure(text="Lossless Scaling: Not found (install on Steam)", text_color=DIM)
 
-    def download_optiscaler(self):
+    def download_opti(self):
         if self.busy: return
         self.busy = True
-        self.opti_dl_btn.configure(text="Downloading...", state="disabled")
-        self.opti_status.configure(text="Downloading...", text_color=ORANGE)
+        self.opti_dl.configure(text="Downloading...", state="disabled")
+        self.opti_status.configure(text="Downloading from GitHub...", text_color=ORANGE)
 
         def work():
             try:
@@ -695,50 +626,109 @@ class LegionCustomApp(ctk.CTk):
                         d = OPTISCALER_DIR / it.name
                         if it.is_dir(): shutil.copytree(it, d)
                         else: shutil.copy2(it, d)
-                self.after(0, lambda: self.opti_status.configure(text=f"Installed {tag} — ready to apply", text_color=ACCENT))
+                self.after(0, lambda: self.opti_status.configure(
+                    text=f"Installed {tag} \u2014 ready to apply", text_color=ACCENT))
             except Exception as e:
                 self.after(0, lambda: self.opti_status.configure(text=f"Failed: {e}", text_color=RED))
             finally:
                 self.busy = False
-                self.after(0, lambda: self.opti_dl_btn.configure(state="normal"))
+                self.after(0, lambda: self.opti_dl.configure(state="normal"))
                 self.after(0, self.refresh_tools)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def open_opti_folder(self):
+    def open_opti(self):
         OPTISCALER_DIR.mkdir(exist_ok=True)
         if sys.platform == "win32":
             os.startfile(OPTISCALER_DIR)
 
-    def launch_lossless(self):
-        p = self.find_lossless()
+    def apply_opti(self):
+        if not OPTISCALER_DIR.exists() or not any(OPTISCALER_DIR.iterdir()):
+            self.apply_lbl.configure(text="Download OptiScaler first", text_color=RED)
+            return
+        folder = filedialog.askdirectory(title="Select game folder")
+        if not folder:
+            return
+        folder = Path(folder)
+        dll = self.dll_var.get() or "dxgi.dll"
+        try:
+            target = folder / dll
+            bak = folder / (dll + ".legionbak")
+            if target.exists() and not bak.exists():
+                shutil.copy2(target, bak)
+            for item in OPTISCALER_DIR.iterdir():
+                dest = folder / item.name
+                if item.is_file():
+                    shutil.copy2(item, dest)
+                elif item.is_dir():
+                    if dest.exists(): shutil.rmtree(dest)
+                    shutil.copytree(item, dest)
+            for cand in ["OptiScaler.dll", "dxgi.dll", "winmm.dll"]:
+                p = OPTISCALER_DIR / cand
+                if p.exists() and p.name.lower() != dll.lower():
+                    src = folder / p.name
+                    if src.exists():
+                        shutil.copy2(src, folder / dll)
+                    break
+            self.applied[str(folder.resolve())] = {"dll": dll, "time": time.strftime("%Y-%m-%d %H:%M")}
+            self._save(APPLIED_LOG, self.applied)
+            self.apply_lbl.configure(text=f"Applied to {folder.name} ({dll})", text_color=ACCENT)
+            self.refresh_games()
+        except Exception as e:
+            self.apply_lbl.configure(text=f"Failed: {e}", text_color=RED)
+
+    def remove_opti(self):
+        folder = filedialog.askdirectory(title="Select game folder to clean")
+        if not folder:
+            return
+        folder = Path(folder)
+        try:
+            for dll in ["dxgi.dll", "winmm.dll", "version.dll", "dbghelp.dll"]:
+                bak = folder / (dll + ".legionbak")
+                if bak.exists():
+                    shutil.copy2(bak, folder / dll)
+                    bak.unlink()
+            for name in ["OptiScaler.dll", "OptiScaler.ini", "nvngx.dll", "libxess.dll"]:
+                p = folder / name
+                if p.exists():
+                    p.unlink()
+            key = str(folder.resolve())
+            if key in self.applied:
+                del self.applied[key]
+                self._save(APPLIED_LOG, self.applied)
+            self.apply_lbl.configure(text=f"Removed from {folder.name}", text_color=ACCENT)
+            self.refresh_games()
+        except Exception as e:
+            self.apply_lbl.configure(text=f"Failed: {e}", text_color=RED)
+
+    def find_ls(self):
+        cands = [
+            Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Steam/steamapps/common/Lossless Scaling/LosslessScaling.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)")) / "Steam/steamapps/common/Lossless Scaling/LosslessScaling.exe",
+        ]
+        for d in "CDEF":
+            cands.append(Path(f"{d}:/SteamLibrary/steamapps/common/Lossless Scaling/LosslessScaling.exe"))
+        for p in cands:
+            if p.exists():
+                return p
+        return None
+
+    def launch_ls(self):
+        p = self.find_ls()
         if p:
             subprocess.Popen([str(p)])
             self.fg_status.configure(text="Lossless Scaling launched", text_color=ACCENT)
         else:
             try:
                 subprocess.Popen(["cmd", "/c", "start", "steam://rungameid/993090"], shell=True)
-                self.fg_status.configure(text="Opening via Steam...", text_color=ORANGE)
             except Exception:
                 self.fg_status.configure(text="Install Lossless Scaling from Steam", text_color=RED)
-
-    def apply_tdp(self):
-        tdp = int(self.config.get("tdp", 25))
-        for c in [APP_DIR / "ryzenadj.exe", Path("C:/tools/ryzenadj/ryzenadj.exe")]:
-            if c.exists():
-                try:
-                    subprocess.Popen([str(c), f"--stapm-limit={tdp*1000}",
-                                      f"--fast-limit={tdp*1000}", f"--slow-limit={tdp*1000}"],
-                                     creationflags=0x08000000 if sys.platform == "win32" else 0)
-                except Exception:
-                    pass
-                return
 
     def do_update(self):
         if self.busy: return
         self.busy = True
         self.upd_btn.configure(state="disabled", text="Updating...")
-        self.upd_status.configure(text="Downloading from GitHub...", text_color=ORANGE)
+        self.upd_lbl.configure(text="Downloading... (repo must be Public)", text_color=ORANGE)
 
         def work():
             try:
@@ -748,7 +738,8 @@ class LegionCustomApp(ctk.CTk):
                     with urllib.request.urlopen(req, timeout=60) as r:
                         zp.write_bytes(r.read())
                     extract = Path(tmp) / "out"; extract.mkdir()
-                    with zipfile.ZipFile(zp) as z: z.extractall(extract)
+                    with zipfile.ZipFile(zp) as z:
+                        z.extractall(extract)
                     inner = next(extract.iterdir())
                     updated = []
                     for fname in ["main.py", "requirements.txt", "README.md", "install.bat", "run.bat"]:
@@ -759,16 +750,18 @@ class LegionCustomApp(ctk.CTk):
                             tmp_dst.replace(APP_DIR / fname)
                             updated.append(fname)
                     if updated:
-                        self.after(0, lambda: self.upd_status.configure(
-                            text=f"Updated: {', '.join(updated)}\nRestarting...", text_color=ACCENT))
+                        self.after(0, lambda: self.upd_lbl.configure(
+                            text=f"Updated {len(updated)} files \u2014 restarting...", text_color=ACCENT))
                         time.sleep(1.5)
                         subprocess.Popen([sys.executable, str(APP_DIR / "main.py")] + sys.argv[1:], cwd=str(APP_DIR))
                         self.after(0, self.destroy)
                     else:
-                        self.after(0, lambda: self.upd_status.configure(text="Already up to date", text_color=ACCENT))
+                        self.after(0, lambda: self.upd_lbl.configure(text="Already up to date", text_color=ACCENT))
             except Exception as e:
-                self.after(0, lambda: self.upd_status.configure(
-                    text=f"Failed: {e}\nDownload ZIP manually", text_color=RED))
+                err = str(e)
+                if "404" in err:
+                    err = "404 Not Found \u2014 make the GitHub repo PUBLIC (Settings \u2192 Danger Zone)"
+                self.after(0, lambda: self.upd_lbl.configure(text=f"Failed: {err}", text_color=RED))
             finally:
                 self.busy = False
                 self.after(0, lambda: self.upd_btn.configure(state="normal", text="Check & Update from GitHub"))
@@ -776,71 +769,28 @@ class LegionCustomApp(ctk.CTk):
         threading.Thread(target=work, daemon=True).start()
 
     def refresh_games(self):
-        for w in self.games_scroll.winfo_children():
+        for w in self.games_frame.winfo_children():
             w.destroy()
-        self.games = self.scan_games()
-        if not self.games:
-            ctk.CTkLabel(self.games_scroll, text="No games found", text_color=TEXT_MUTED).grid(
-                row=0, column=0, columnspan=4, pady=60)
+        games = self.scan_games()
+        if not games:
+            ctk.CTkLabel(self.games_frame, text="No Steam games found", text_color=MUTED,
+                         font=ctk.CTkFont(size=16)).grid(row=0, column=0, columnspan=4, pady=80)
             return
-        for i, g in enumerate(self.games):
+        for i, g in enumerate(games):
             r, c = divmod(i, 4)
-            card = ctk.CTkFrame(self.games_scroll, width=220, height=140, corner_radius=14, fg_color=CARD)
-            card.grid(row=r, column=c, padx=8, pady=8, sticky="nsew")
+            card = ctk.CTkFrame(self.games_frame, width=240, height=150, corner_radius=14, fg_color=CARD)
+            card.grid(row=r, column=c, padx=10, pady=10, sticky="nsew")
             card.grid_propagate(False)
-            name = g["name"][:24]
             applied = str(Path(g["path"]).parent.resolve()) in self.applied
-            label = name + ("  ✓" if applied else "")
-            ctk.CTkLabel(card, text=label, font=ctk.CTkFont(size=13, weight="bold"),
-                         text_color=ACCENT if applied else TEXT, wraplength=200).pack(pady=(16, 6), padx=8)
-            btnrow = ctk.CTkFrame(card, fg_color="transparent")
-            btnrow.pack()
+            name = g["name"][:22] + ("  \u2713" if applied else "")
+            ctk.CTkLabel(card, text=name, font=ctk.CTkFont(size=14, weight="bold"),
+                         text_color=ACCENT if applied else TEXT, wraplength=210).pack(pady=(20, 10), padx=10)
+            row = ctk.CTkFrame(card, fg_color="transparent")
+            row.pack()
             if Path(g["path"]).exists():
-                ctk.CTkButton(btnrow, text="Play", width=70, height=30,
-                              fg_color=ACCENT, hover_color=ACCENT_DIM, text_color="#000",
-                              command=lambda p=g["path"]: subprocess.Popen([p], cwd=str(Path(p).parent))).pack(side="left", padx=2)
-                ctk.CTkButton(btnrow, text="Opti", width=55, height=30,
-                              fg_color=BLUE, hover_color="#2a5fd4",
-                              command=lambda p=g["path"]: self.quick_apply_opti(Path(p).parent)).pack(side="left", padx=2)
-
-    def quick_apply_opti(self, folder: Path):
-        """Apply OptiScaler to this game folder without file dialog."""
-        if not OPTISCALER_DIR.exists() or not any(OPTISCALER_DIR.iterdir()):
-            self.open_menu()
-            self.apply_status.configure(text="Download OptiScaler first (Quick Menu)", text_color=RED)
-            return
-        dll_name = self.config.get("opti_dll_name", "dxgi.dll")
-        try:
-            target = folder / dll_name
-            backup = folder / (dll_name + ".legionbak")
-            if target.exists() and not backup.exists():
-                shutil.copy2(target, backup)
-            for item in OPTISCALER_DIR.iterdir():
-                dest = folder / item.name
-                if item.is_file():
-                    shutil.copy2(item, dest)
-                elif item.is_dir():
-                    if dest.exists():
-                        shutil.rmtree(dest)
-                    shutil.copytree(item, dest)
-            main_src = None
-            for candidate in ["OptiScaler.dll", "dxgi.dll", "winmm.dll"]:
-                p = OPTISCALER_DIR / candidate
-                if p.exists():
-                    main_src = p
-                    break
-            if main_src and main_src.name.lower() != dll_name.lower():
-                src_in_game = folder / main_src.name
-                renamed = folder / dll_name
-                if src_in_game.exists():
-                    shutil.copy2(src_in_game, renamed)
-            key = str(folder.resolve())
-            self.applied[key] = {"dll": dll_name, "scaler": self.config.get("scaler"), "time": time.strftime("%Y-%m-%d %H:%M")}
-            self._save_applied()
-            self.refresh_games()
-            self.apply_status.configure(text=f"Applied to {folder.name}", text_color=ACCENT)
-        except Exception as e:
-            self.apply_status.configure(text=f"Failed: {e}", text_color=RED)
+                ctk.CTkButton(row, text="Play", width=90, height=34,
+                              fg_color=ACCENT, hover_color=ACCENT2, text_color="#000",
+                              command=lambda p=g["path"]: subprocess.Popen([p], cwd=str(Path(p).parent))).pack(side="left", padx=4)
 
     def scan_games(self):
         found = []
@@ -851,16 +801,18 @@ class LegionCustomApp(ctk.CTk):
         for d in "CDEF":
             bases.append(Path(f"{d}:/SteamLibrary/steamapps/common"))
         for base in bases:
-            if not base.exists(): continue
+            if not base.exists():
+                continue
             for gdir in base.iterdir():
-                if not gdir.is_dir(): continue
+                if not gdir.is_dir():
+                    continue
                 exes = list(gdir.glob("*.exe"))
-                if not exes: continue
+                if not exes:
+                    continue
                 main = next((e for e in exes if gdir.name.lower() in e.stem.lower()), exes[0])
                 found.append({"name": gdir.name, "path": str(main)})
-        return list({g["name"]: g for g in found}.values())[:40]
+        return list({g["name"]: g for g in found}.values())[:48]
 
 
 if __name__ == "__main__":
-    app = LegionCustomApp()
-    app.mainloop()
+    App().mainloop()

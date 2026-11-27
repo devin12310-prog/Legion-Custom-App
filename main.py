@@ -17,7 +17,6 @@ ctk.set_default_color_theme("dark-blue")
 APP_DIR = Path(__file__).parent
 CONFIG_FILE = APP_DIR / "config.json"
 
-# Legion Go friendly resolutions (native + common performance options)
 LEGION_RESOLUTIONS = [
     "1600x1000",   # Native
     "1280x800",
@@ -25,6 +24,17 @@ LEGION_RESOLUTIONS = [
     "1200x750",
     "800x500",
     "640x400"
+]
+
+# Common Legion Space related processes
+LEGION_SPACE_PROCESSES = [
+    "LegionSpace.exe",
+    "LSDaemon.exe",
+    "LegionSettingMenu.exe",
+    "LegionGameWidget.exe",
+    "LegionGameWidget_Sub.exe",
+    "LegionSpaceComponent.exe",
+    "LegionSpaceToast.exe",
 ]
 
 DEFAULT_CONFIG = {
@@ -49,7 +59,6 @@ class LegionCustomApp(ctk.CTk):
         self.geometry("1280x800")
         self.minsize(1000, 600)
 
-        # Make window appear on top when launched via Legion button
         self.attributes("-topmost", True)
         self.after(800, lambda: self.attributes("-topmost", False))
 
@@ -60,24 +69,22 @@ class LegionCustomApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # ===== MAIN CONTENT (Home) =====
+        # ===== MAIN CONTENT =====
         self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#0f1115")
         self.main_frame.grid(row=0, column=0, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(1, weight=1)
 
-        # Top bar
         self.top_bar = ctk.CTkFrame(self.main_frame, height=64, corner_radius=0, fg_color="#161a22")
         self.top_bar.grid(row=0, column=0, sticky="ew")
         self.top_bar.grid_propagate(False)
 
-        self.title_label = ctk.CTkLabel(
+        ctk.CTkLabel(
             self.top_bar, text="LEGION CUSTOM",
             font=ctk.CTkFont(size=20, weight="bold")
-        )
-        self.title_label.pack(side="left", padx=22, pady=16)
+        ).pack(side="left", padx=22, pady=16)
 
-        # Right-top button that opens the Quick Menu
+        # Right-top button opens the Quick Menu
         self.open_menu_btn = ctk.CTkButton(
             self.top_bar, text="Quick Menu  ▶",
             width=150, height=38,
@@ -87,7 +94,6 @@ class LegionCustomApp(ctk.CTk):
         )
         self.open_menu_btn.pack(side="right", padx=20)
 
-        # Games area
         self.games_container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.games_container.grid(row=1, column=0, sticky="nsew", padx=20, pady=16)
         self.games_container.grid_columnconfigure(0, weight=1)
@@ -120,7 +126,6 @@ class LegionCustomApp(ctk.CTk):
 
         self.build_right_panel()
 
-        # Hotkeys
         self.bind("<Control-Shift-L>", lambda e: self.toggle_right_panel())
         self.bind("<Escape>", lambda e: self.hide_right_panel())
         self.bind("<F1>", lambda e: self.toggle_right_panel())
@@ -187,7 +192,7 @@ class LegionCustomApp(ctk.CTk):
         )
         self.panel_scroll.pack(fill="both", expand=True, padx=12, pady=6)
 
-        # ========== 1. PERFORMANCE ==========
+        # ========== PERFORMANCE ==========
         self._section("PERFORMANCE")
 
         preset_frame = self._card()
@@ -199,7 +204,6 @@ class LegionCustomApp(ctk.CTk):
                 command=self.on_preset_change
             ).pack(anchor="w", padx=14, pady=5)
 
-        # TDP
         self._section("TDP LIMIT")
         tdp_frame = self._card()
 
@@ -219,7 +223,7 @@ class LegionCustomApp(ctk.CTk):
             command=self.apply_tdp, fg_color="#2a6df4", height=36
         ).pack(fill="x", padx=14, pady=(0, 14))
 
-        # ========== 2. DISPLAY ==========
+        # ========== DISPLAY ==========
         self._section("DISPLAY")
 
         disp_frame = self._card()
@@ -227,8 +231,7 @@ class LegionCustomApp(ctk.CTk):
         ctk.CTkLabel(disp_frame, text="Resolution (Legion Go)").pack(anchor="w", padx=14, pady=(12, 2))
         self.res_var = ctk.StringVar(value=self.config.get("resolution", "1600x1000"))
         ctk.CTkOptionMenu(
-            disp_frame,
-            values=LEGION_RESOLUTIONS,
+            disp_frame, values=LEGION_RESOLUTIONS,
             variable=self.res_var,
             command=lambda v: self.update_config("resolution", v)
         ).pack(fill="x", padx=14, pady=(0, 10))
@@ -236,8 +239,7 @@ class LegionCustomApp(ctk.CTk):
         ctk.CTkLabel(disp_frame, text="Refresh Rate").pack(anchor="w", padx=14, pady=(4, 2))
         self.refresh_var = ctk.StringVar(value=str(self.config.get("refresh", 144)))
         ctk.CTkOptionMenu(
-            disp_frame,
-            values=["60", "120", "144"],
+            disp_frame, values=["60", "120", "144"],
             variable=self.refresh_var,
             command=lambda v: self.update_config("refresh", int(v))
         ).pack(fill="x", padx=14, pady=(0, 10))
@@ -250,7 +252,7 @@ class LegionCustomApp(ctk.CTk):
         self.brightness_slider.set(self.config.get("brightness", 70))
         self.brightness_slider.pack(fill="x", padx=14, pady=(0, 14))
 
-        # ========== 3. SCALERS & FRAME GENERATION ==========
+        # ========== SCALERS & FRAME GEN ==========
         self._section("SCALERS & FRAME GEN")
 
         scale_frame = self._card()
@@ -273,7 +275,6 @@ class LegionCustomApp(ctk.CTk):
             command=lambda v: self.update_config("frame_gen", v)
         ).pack(fill="x", padx=14, pady=(0, 12))
 
-        # Action buttons
         btn_row1 = ctk.CTkFrame(scale_frame, fg_color="transparent")
         btn_row1.pack(fill="x", padx=14, pady=(0, 6))
 
@@ -288,7 +289,6 @@ class LegionCustomApp(ctk.CTk):
             command=self.open_optiscaler_folder, height=36
         ).pack(side="left", expand=True, fill="x", padx=(6, 0))
 
-        # Official GitHub links
         ctk.CTkLabel(
             scale_frame, text="Official Repositories",
             font=ctk.CTkFont(size=12, weight="bold"), text_color="#7a8494"
@@ -315,16 +315,30 @@ class LegionCustomApp(ctk.CTk):
             height=34, fg_color="#2a3140"
         ).pack(fill="x", padx=14, pady=(0, 14))
 
-        # ========== 4. LEGION GO MAPPER ==========
-        self._section("LEGION GO MAPPER")
+        # ========== LEGION GO MAPPER + BUTTON DUTIES ==========
+        self._section("LEGION GO MAPPER & BUTTONS")
 
         mapper_frame = self._card()
 
         ctk.CTkLabel(
             mapper_frame,
-            text="Controller profiles for Legion Go\n(Y1 / Y2 / Y3 + rear buttons)",
-            justify="left"
-        ).pack(anchor="w", padx=14, pady=(12, 6))
+            text="Recommended button duties (so they don't conflict):",
+            justify="left", font=ctk.CTkFont(weight="bold")
+        ).pack(anchor="w", padx=14, pady=(12, 4))
+
+        ctk.CTkLabel(
+            mapper_frame,
+            text="• Left Legion button  → Launch this app\n"
+                 "• Right / Top button   → Open Quick Menu\n"
+                 "• Y1 / Y2 / Y3 + Rear → Your custom actions",
+            justify="left", text_color="#c5cdd8"
+        ).pack(anchor="w", padx=14, pady=(0, 8))
+
+        ctk.CTkLabel(
+            mapper_frame,
+            text="Map the physical Legion buttons with PowerToys\nor AutoHotkey so they open this app / menu\ninstead of Legion Space.",
+            justify="left", text_color="#9aa3b2"
+        ).pack(anchor="w", padx=14, pady=(0, 10))
 
         self.mapper_var = ctk.StringVar(value=self.config.get("mapper_profile", "Default"))
         ctk.CTkOptionMenu(
@@ -332,35 +346,42 @@ class LegionCustomApp(ctk.CTk):
             values=["Default", "Desktop", "FPS", "Racing", "Custom 1", "Custom 2"],
             variable=self.mapper_var,
             command=lambda v: self.update_config("mapper_profile", v)
-        ).pack(fill="x", padx=14, pady=(0, 8))
-
-        ctk.CTkLabel(
-            mapper_frame,
-            text="Y1 → Keyboard shortcut\nY2 → Mouse button\nY3 → Macro\nRear buttons → Quick actions",
-            justify="left", text_color="#9aa3b2"
-        ).pack(anchor="w", padx=14, pady=(0, 10))
-
-        ctk.CTkButton(
-            mapper_frame, text="Advanced Mapper (coming soon)",
-            state="disabled", height=34
         ).pack(fill="x", padx=14, pady=(0, 14))
 
-        # ========== 5. DRIVERS & UPDATES ==========
+        # ========== FORCE CLOSE LEGION SPACE ==========
+        self._section("LEGION SPACE CONTROL")
+
+        ls_frame = self._card()
+
+        ctk.CTkLabel(
+            ls_frame,
+            text="Force close Legion Space so its buttons\ndon't conflict with this app.",
+            justify="left"
+        ).pack(anchor="w", padx=14, pady=(12, 8))
+
+        ctk.CTkButton(
+            ls_frame, text="Force Close Legion Space",
+            command=self.force_close_legion_space,
+            fg_color="#c0392b", hover_color="#a93226", height=40,
+            font=ctk.CTkFont(weight="bold")
+        ).pack(fill="x", padx=14, pady=(0, 8))
+
+        self.ls_status_label = ctk.CTkLabel(
+            ls_frame, text="Status: Ready",
+            text_color="#9aa3b2"
+        )
+        self.ls_status_label.pack(anchor="w", padx=14, pady=(0, 14))
+
+        # ========== DRIVERS & UPDATES ==========
         self._section("DRIVERS & UPDATES")
 
         drivers_frame = self._card()
-
-        ctk.CTkLabel(
-            drivers_frame,
-            text="Keep Legion Go drivers and tools updated",
-            justify="left"
-        ).pack(anchor="w", padx=14, pady=(12, 8))
 
         ctk.CTkButton(
             drivers_frame, text="Lenovo Legion Drivers / Support",
             command=lambda: webbrowser.open("https://pcsupport.lenovo.com/us/en/products/laptops-and-netbooks/legion-series/legion-go-8apu1"),
             height=36, fg_color="#2a3140"
-        ).pack(fill="x", padx=14, pady=(0, 6))
+        ).pack(fill="x", padx=14, pady=(12, 6))
 
         ctk.CTkButton(
             drivers_frame, text="AMD Adrenalin / Chipset",
@@ -374,7 +395,7 @@ class LegionCustomApp(ctk.CTk):
             height=36, fg_color="#2a6df4"
         ).pack(fill="x", padx=14, pady=(0, 14))
 
-        # ========== 6. SYSTEM ==========
+        # ========== SYSTEM ==========
         self._section("SYSTEM")
 
         sys_frame = self._card()
@@ -404,6 +425,51 @@ class LegionCustomApp(ctk.CTk):
         frame = ctk.CTkFrame(self.panel_scroll, fg_color="#1c212b", corner_radius=10)
         frame.pack(fill="x", pady=(0, 6))
         return frame
+
+    def force_close_legion_space(self):
+        """Kill common Legion Space processes so buttons don't conflict."""
+        killed = []
+        errors = []
+
+        if psutil:
+            for proc in psutil.process_iter(["pid", "name"]):
+                try:
+                    name = proc.info["name"]
+                    if name and name.lower() in [p.lower() for p in LEGION_SPACE_PROCESSES]:
+                        proc.kill()
+                        killed.append(name)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+                except Exception as e:
+                    errors.append(str(e))
+        else:
+            # Fallback using taskkill
+            for name in LEGION_SPACE_PROCESSES:
+                try:
+                    result = subprocess.run(
+                        ["taskkill", "/F", "/IM", name],
+                        capture_output=True, text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                    )
+                    if result.returncode == 0:
+                        killed.append(name)
+                except Exception:
+                    pass
+
+        if killed:
+            unique = sorted(set(killed))
+            self.ls_status_label.configure(
+                text=f"Closed: {', '.join(unique)}",
+                text_color="#2ecc71"
+            )
+        else:
+            self.ls_status_label.configure(
+                text="No Legion Space processes found running",
+                text_color="#9aa3b2"
+            )
+
+        if errors:
+            print("Errors while closing:", errors)
 
     def on_preset_change(self):
         preset = self.preset_var.get()
@@ -442,7 +508,6 @@ class LegionCustomApp(ctk.CTk):
                 ]
                 flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 subprocess.Popen(cmd, creationflags=flags)
-                print(f"Applied ~{tdp}W via RyzenAdj")
             except Exception as e:
                 print("RyzenAdj error:", e)
         else:
@@ -460,7 +525,7 @@ class LegionCustomApp(ctk.CTk):
         try:
             subprocess.Popen(["cmd", "/c", "start", "steam://rungameid/993090"], shell=True)
         except Exception:
-            print("Could not find Lossless Scaling. Launch it from Steam.")
+            print("Could not find Lossless Scaling.")
 
     def open_optiscaler_folder(self):
         folder = APP_DIR / "OptiScaler"

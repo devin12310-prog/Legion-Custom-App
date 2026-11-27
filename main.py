@@ -5,7 +5,6 @@ import sys
 import webbrowser
 from pathlib import Path
 import json
-import threading
 
 try:
     import psutil
@@ -124,17 +123,13 @@ class LegionCustomApp(ctk.CTk):
         # Hotkeys
         self.bind("<Control-Shift-L>", lambda e: self.toggle_right_panel())
         self.bind("<Escape>", lambda e: self.hide_right_panel())
-        self.bind("<F1>", lambda e: self.toggle_right_panel())   # easy extra hotkey
+        self.bind("<F1>", lambda e: self.toggle_right_panel())
 
-        # If launched with --menu argument, open the panel immediately
         if "--menu" in sys.argv or self.config.get("start_with_menu"):
             self.after(200, self.show_right_panel)
 
         self.refresh_games()
 
-    # ------------------------------------------------------------------
-    # Config helpers
-    # ------------------------------------------------------------------
     def load_config(self):
         if CONFIG_FILE.exists():
             try:
@@ -156,9 +151,6 @@ class LegionCustomApp(ctk.CTk):
         self.config[key] = value
         self.save_config()
 
-    # ------------------------------------------------------------------
-    # Right panel show / hide
-    # ------------------------------------------------------------------
     def toggle_right_panel(self):
         if self.right_panel_visible:
             self.hide_right_panel()
@@ -175,11 +167,7 @@ class LegionCustomApp(ctk.CTk):
         self.right_panel_visible = False
         self.open_menu_btn.configure(text="Quick Menu  ▶")
 
-    # ------------------------------------------------------------------
-    # Build the right menu with clear sections
-    # ------------------------------------------------------------------
     def build_right_panel(self):
-        # Header
         header = ctk.CTkFrame(self.right_panel, fg_color="transparent")
         header.pack(fill="x", padx=16, pady=(16, 6))
 
@@ -194,7 +182,6 @@ class LegionCustomApp(ctk.CTk):
             command=self.hide_right_panel
         ).pack(side="right")
 
-        # Scrollable body
         self.panel_scroll = ctk.CTkScrollableFrame(
             self.right_panel, fg_color="transparent"
         )
@@ -272,7 +259,7 @@ class LegionCustomApp(ctk.CTk):
         self.scaler_var = ctk.StringVar(value=self.config.get("scaler", "None"))
         ctk.CTkOptionMenu(
             scale_frame,
-            values=["None", "FSR 2 / 3", "XeSS", "OptiScaler (Auto)", "DLSS Spoof"],
+            values=["None", "FSR 2 / 3 / 4", "XeSS", "OptiScaler (Auto)", "DLSS Spoof"],
             variable=self.scaler_var,
             command=lambda v: self.update_config("scaler", v)
         ).pack(fill="x", padx=14, pady=(0, 10))
@@ -281,24 +268,52 @@ class LegionCustomApp(ctk.CTk):
         self.fg_var = ctk.StringVar(value=self.config.get("frame_gen", "Off"))
         ctk.CTkOptionMenu(
             scale_frame,
-            values=["Off", "Lossless Scaling (LSFG)", "AMD AFMF", "OptiFG"],
+            values=["Off", "Lossless Scaling (LSFG)", "AMD AFMF", "OptiFG", "XeFG"],
             variable=self.fg_var,
             command=lambda v: self.update_config("frame_gen", v)
         ).pack(fill="x", padx=14, pady=(0, 12))
 
-        btn_row = ctk.CTkFrame(scale_frame, fg_color="transparent")
-        btn_row.pack(fill="x", padx=14, pady=(0, 14))
+        # Action buttons
+        btn_row1 = ctk.CTkFrame(scale_frame, fg_color="transparent")
+        btn_row1.pack(fill="x", padx=14, pady=(0, 6))
 
         ctk.CTkButton(
-            btn_row, text="Launch Lossless Scaling",
+            btn_row1, text="Launch Lossless Scaling",
             command=self.launch_lossless,
             fg_color="#1a8f5c", hover_color="#147a4d", height=36
         ).pack(side="left", expand=True, fill="x", padx=(0, 6))
 
         ctk.CTkButton(
-            btn_row, text="OptiScaler Folder",
+            btn_row1, text="OptiScaler Folder",
             command=self.open_optiscaler_folder, height=36
         ).pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+        # Official GitHub links
+        ctk.CTkLabel(
+            scale_frame, text="Official Repositories",
+            font=ctk.CTkFont(size=12, weight="bold"), text_color="#7a8494"
+        ).pack(anchor="w", padx=14, pady=(8, 4))
+
+        btn_row2 = ctk.CTkFrame(scale_frame, fg_color="transparent")
+        btn_row2.pack(fill="x", padx=14, pady=(0, 6))
+
+        ctk.CTkButton(
+            btn_row2, text="OptiScaler GitHub",
+            command=lambda: webbrowser.open("https://github.com/optiscaler/OptiScaler"),
+            height=34, fg_color="#2a3140"
+        ).pack(side="left", expand=True, fill="x", padx=(0, 6))
+
+        ctk.CTkButton(
+            btn_row2, text="OptiScaler Releases",
+            command=lambda: webbrowser.open("https://github.com/optiscaler/OptiScaler/releases"),
+            height=34, fg_color="#2a3140"
+        ).pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+        ctk.CTkButton(
+            scale_frame, text="OptiScaler Wiki (Install Guide)",
+            command=lambda: webbrowser.open("https://github.com/optiscaler/OptiScaler/wiki"),
+            height=34, fg_color="#2a3140"
+        ).pack(fill="x", padx=14, pady=(0, 14))
 
         # ========== 4. LEGION GO MAPPER ==========
         self._section("LEGION GO MAPPER")
@@ -377,9 +392,6 @@ class LegionCustomApp(ctk.CTk):
 
         self.after(400, self.update_sys_info)
 
-    # ------------------------------------------------------------------
-    # UI helpers
-    # ------------------------------------------------------------------
     def _section(self, text: str):
         lbl = ctk.CTkLabel(
             self.panel_scroll, text=text,
@@ -393,9 +405,6 @@ class LegionCustomApp(ctk.CTk):
         frame.pack(fill="x", pady=(0, 6))
         return frame
 
-    # ------------------------------------------------------------------
-    # Callbacks
-    # ------------------------------------------------------------------
     def on_preset_change(self):
         preset = self.preset_var.get()
         self.update_config("preset", preset)
@@ -481,9 +490,6 @@ class LegionCustomApp(ctk.CTk):
 
         self.sys_info_label.configure(text="\n".join(lines))
 
-    # ------------------------------------------------------------------
-    # Games
-    # ------------------------------------------------------------------
     def refresh_games(self):
         for child in self.games_scroll.winfo_children():
             child.destroy()

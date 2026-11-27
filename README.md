@@ -1,32 +1,33 @@
-# Legion Custom v2.0.0
+# Legion Custom v2.1.0
 
-Multi-page Legion Space-style control app for the first-gen Legion Go (Z1 Extreme).
+Right-side **Game Menu** for the Legion Go: TDP, fan, upscalers, frame gen, resolutions.
 
-## Install
+## Setup
 
-1. Make this repo **Public** on GitHub (Settings → Danger Zone → Change visibility)
-2. Install Python 3.10+
-3. Download ZIP → extract
-4. Run `install.bat`
+1. Make the GitHub repo **Public**
+2. Install Python + run `install.bat`
+3. App force-closes Legion Space on launch so stock menu does not fight it
 
-## Pages
+## Game Menu (right overlay)
 
-- **Games** — library + Force Close Legion Space
-- **Perf** — presets, live stats, TDP, fan
-- **Display** — resolutions + refresh
-- **Scaler** — OptiScaler download / apply / remove
-- **FrameGen** — Lossless Scaling, AFMF, OptiFG
-- **Drivers** — AMD 25.30.44
-- **Settings** — updater + button mapping help
+Open with:
+- **GAME MENU** button on the left sidebar
+- **F1** or **Ctrl+Shift+L**
+- `run.bat --menu` (what the Legion button helper runs)
 
-## Right Legion Button
+Contains:
+- Force Close Legion Space
+- Performance presets + TDP + fan
+- Upscaler + OptiScaler download/apply/remove
+- Frame gen + Launch Lossless Scaling
+- Resolution / refresh quick toggles
 
-Map with PowerToys or AutoHotkey to:
+## Legion physical button
 
-```
-path\to\run.bat --menu
-```
+Stock Legion Space owns that button. This app kills Legion Space on start.
 
-## Update 404?
+Then either:
+- Press **F1**
+- Or run `legion_button.ahk` (AutoHotkey) so a hotkey launches the Game Menu
 
-The repo must be **Public** or the in-app updater gets HTTP 404.
+True exclusive capture of the hardware Legion key needs Handheld Companion or similar; this app focuses on the menu itself.

@@ -1,68 +1,102 @@
 # Legion Custom App
 
-Personal custom launcher + quick settings overlay for the **first-gen Lenovo Legion Go (Z1 Extreme)**.
+Custom quick-settings app for the **first-gen Lenovo Legion Go (Ryzen Z1 Extreme)**.
 
-## Features
+Replaces the need for Legion Space for daily use, with built-in support for:
 
-### Home Page
-- Scans Steam library for installed games
-- Simple game cards with Launch button
-
-### Right Quick Menu (clear sections)
-1. **Performance** – Quiet / Balanced / Performance / Custom
-2. **TDP Limit** – Slider + Apply via RyzenAdj
-3. **Display** – Legion Go resolutions (1600x1000 native + others), refresh, brightness
-4. **Scalers & Frame Gen** – FSR / XeSS / OptiScaler / DLSS + Lossless Scaling / AFMF / OptiFG / XeFG
-5. **Legion Go Mapper** – Y1/Y2/Y3 + rear button profiles
-6. **Drivers & Updates** – Lenovo + AMD + this repo
-7. **System** – Live stats
-
-### Buttons
-- **Top-right Quick Menu button** opens the right panel
-- Legion button → map with PowerToys / AutoHotkey (see below)
-- Hotkeys: `Ctrl+Shift+L` or `F1`
+- Performance presets + TDP control (RyzenAdj)
+- Display resolution / refresh rate (native Legion Go resolutions)
+- **OptiScaler** (download & update directly from the app)
+- Frame generation options (Lossless Scaling, AFMF, OptiFG, XeFG)
+- Legion Go button mapper notes
+- Force-close Legion Space (so buttons don’t conflict)
+- Official AMD Adrenalin **25.30.44** driver link for Legion Go
 
 ---
 
-## Download & Run
+## Download (one ZIP)
 
-1. Download ZIP from this repo
-2. Extract
-3. Install Python 3.11+
-4. In the folder:
+### Easiest way right now:
+
+1. Go to the repository:  
+   **https://github.com/devin12310-prog/Legion-Custom-App**
+
+2. Click the green **Code** button
+
+3. Click **Download ZIP**
+
+4. Extract the ZIP anywhere
+
+5. Open a terminal / PowerShell in the extracted folder and run:
 
 ```powershell
 pip install -r requirements.txt
 python main.py
 ```
 
----
-
-## Official OptiScaler & Frame Gen Links
-
-- **OptiScaler** (main tool): https://github.com/optiscaler/OptiScaler
-- **OptiScaler Releases**: https://github.com/optiscaler/OptiScaler/releases
-- **OptiScaler Wiki** (install guide): https://github.com/optiscaler/OptiScaler/wiki
-
-Lossless Scaling is a paid Steam app (AppID 993090). The menu has a one-click launch button for it.
+That’s it. No releases page needed — the Code → Download ZIP always gives you the latest version of the whole app.
 
 ---
 
-## Mapping the Legion Button
+## Features
 
-Use **Microsoft PowerToys** → Keyboard Manager to remap the Legion button to launch:
+| Section | What it does |
+|---------|--------------|
+| **Performance** | Quiet / Balanced / Performance / Custom presets |
+| **TDP Limit** | Slider + Apply (uses RyzenAdj if present) |
+| **Display** | Legion Go native resolutions + refresh rate |
+| **Scalers & Frame Gen** | Built-in OptiScaler downloader + Lossless Scaling launch |
+| **Mapper & Buttons** | Recommended left/right Legion button duties |
+| **Legion Space Control** | Force-close Legion Space processes |
+| **Drivers & Updates** | Direct link to official Lenovo AMD 25.30.44 package |
 
+---
+
+## Recommended button setup
+
+- **Left Legion button** → Launch this app  
+- **Right / Top button** → Open the Quick Menu  
+- Map them with **PowerToys Keyboard Manager** or **AutoHotkey** so they open this app instead of Legion Space.
+
+Then use the red **Force Close Legion Space** button whenever the stock app is running and stealing the buttons.
+
+---
+
+## OptiScaler (built-in)
+
+1. Open Quick Menu → **SCALERS & FRAME GEN**
+2. Click **Download / Update OptiScaler**
+3. The app pulls the latest release from the official GitHub repo into an `OptiScaler` folder
+4. Copy the files into your game directory (usually rename the main DLL to `dxgi.dll`)
+
+---
+
+## AMD Driver 25.30.44 (Legion Go)
+
+In the app go to **DRIVERS & UPDATES** and click the orange button.  
+It opens the official Lenovo page for the package made specifically for the first-gen Legion Go.
+
+---
+
+## Requirements
+
+- Windows 11
+- Python 3.10+
+- `pip install -r requirements.txt` (only needs `customtkinter` and optionally `psutil`)
+
+Optional:
+- `ryzenadj.exe` next to the app for real TDP control
+- Lossless Scaling (Steam) for LSFG
+
+---
+
+## Hotkeys
+
+- `Ctrl + Shift + L` or `F1` → Toggle Quick Menu
+- `Esc` → Close Quick Menu
+
+You can also launch with the menu already open:
+
+```powershell
+python main.py --menu
 ```
-python "C:\path\to\LegionCustomApp\main.py"
-```
-
-Or create a shortcut and map to that.
-
----
-
-## Optional Tools
-
-- Place `ryzenadj.exe` next to `main.py` for real TDP control
-- Drop OptiScaler files into the `OptiScaler` folder the app creates
-
-Repo: https://github.com/devin12310-prog/Legion-Custom-App
